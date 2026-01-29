@@ -6,7 +6,8 @@ on:
     types: [completed]
 
 permissions:
-  :contentReference[oaicite:5]{index=5}e
+  actions: read
+  contents: write
   pull-requests: write
   issues: write
 
