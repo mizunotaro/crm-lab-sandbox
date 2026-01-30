@@ -17,7 +17,12 @@ concurrency:
 
 jobs:
   call:
-    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-orchestrator.yml@v0.1.10
+    permissions:
+      id-token: write
+      contents: write
+      pull-requests: write
+      issues: write
+    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-orchestrator.yml@v0.1.11
     with:
       model: "zai/glm-4.7"
     secrets:
