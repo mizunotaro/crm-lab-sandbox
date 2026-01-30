@@ -16,4 +16,4 @@ concurrency:
 
 jobs:
   call:
-    uses: <OWNER>/ai-playbook/.github/workflows/reuse-ai-watchdog.yml@v0.1.0
+    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-watchdog.yml@v0.1.0
