@@ -1,0 +1,24 @@
+name: AI Orchestrator
+
+on:
+  schedule:
+    - cron: "*/15 * * * *" # JP: 15分おき / EN: every 15 min
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write # OpenCode GitHub App(OIDC) 用 :contentReference[oaicite:5]{index=5}
+
+concurrency:
+  group: ai-orchestrator-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  call:
+    uses: <OWNER>/ai-playbook/.github/workflows/reuse-ai-orchestrator.yml@v0.1.0
+    with:
+      model: "zai/glm-4.7"
+    secrets:
+      ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
