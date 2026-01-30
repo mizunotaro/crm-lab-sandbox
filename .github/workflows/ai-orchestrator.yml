@@ -9,7 +9,7 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
-  id-token: write # OpenCode GitHub App(OIDC) 用 :contentReference[oaicite:5]{index=5}
+  id-token: write
 
 concurrency:
   group: ai-orchestrator-${{ github.repository }}
@@ -22,8 +22,12 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
-    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-orchestrator.yml@v0.1.11
+    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-orchestrator.yml@v0.1.12
     with:
-      model: "zai/glm-4.7"
+      # Align to your OpenCode GitHub install selection:
+      # Provider: Z.AI Coding Plan, Model: GLM-4.7
+      model: "zai-coding-plan/glm-4.7"
     secrets:
+      # Either name works; reusable workflow normalizes it.
       ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+      ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
