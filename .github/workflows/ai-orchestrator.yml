@@ -22,7 +22,7 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
-    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-orchestrator.yml@v0.1.16
+    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-orchestrator.yml@v0.1.17
     with:
       # Align to your OpenCode GitHub install selection:
       # Provider: Z.AI Coding Plan, Model: GLM-4.7
