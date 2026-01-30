@@ -1,0 +1,19 @@
+name: AI Watchdog
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  actions: write
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: ai-watchdog-${{ github.repository }}
+  cancel-in-progress: true
+
+jobs:
+  call:
+    uses: <OWNER>/ai-playbook/.github/workflows/reuse-ai-watchdog.yml@v0.1.0
