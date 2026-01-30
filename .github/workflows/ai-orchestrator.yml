@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   call:
-    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-orchestrator.yml@v0.1.1
+    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-orchestrator.yml@v0.1.0
     with:
       model: "zai/glm-4.7"
     secrets:
