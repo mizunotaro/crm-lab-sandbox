@@ -1,1 +1,1 @@
-export const sharedHello = "shared";
+export * from "./types";
