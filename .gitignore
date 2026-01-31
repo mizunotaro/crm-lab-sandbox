@@ -7,6 +7,10 @@ expo/
 .DS_Store
 .env
 .env.*
+# Ignore compiled JS files from TS (except index.js at root)
+**/*.js
+!index.js
+!**/index.js
 # docs/ is mostly ignored, but specific subdirectories are tracked below
 #docs/
 docs/ops/
