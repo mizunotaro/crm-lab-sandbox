@@ -15,4 +15,4 @@ concurrency:
 
 jobs:
   call:
-    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-daily.yml@v0.1.0
+    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-daily.yml@main
