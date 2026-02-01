@@ -20,6 +20,12 @@ This repository is a training app for building a modern CRM system targeting:
 # Install dependencies
 pnpm install
 
+# Run all dev checks (lint/typecheck/test/build) in CI order
+pwsh ops/scripts/dev-check.ps1
+
+# Skip specific steps
+pwsh ops/scripts/dev-check.ps1 -SkipLint -SkipBuild
+
 # Build
 pnpm build
 ```
