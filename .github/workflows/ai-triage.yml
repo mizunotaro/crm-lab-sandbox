@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   call:
-    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-triage.yml@v0.1.0
+    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-triage.yml@281a4a5f981d608ba87550f1889adf8832392beb
     with:
       model: "zai/glm-4.7"
     secrets:
