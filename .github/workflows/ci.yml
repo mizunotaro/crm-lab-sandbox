@@ -20,3 +20,5 @@ jobs:
       - run: pnpm -v
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r exec tsc --noEmit
+      - run: pnpm --filter @crm/api test:run
+
