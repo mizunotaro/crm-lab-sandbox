@@ -19,8 +19,9 @@ concurrency:
 
 jobs:
   call:
-    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-triage.yml@281a4a5f981d608ba87550f1889adf8832392beb
+    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-triage.yml@18822dbf6a08d9f579d344a8cac974e047842ffc
     with:
       model: "zai/glm-4.7"
     secrets:
       ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+
