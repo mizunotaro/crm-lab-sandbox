@@ -1,1 +1,1 @@
-{"name":"@crm/shared","private":true,"version":"0.0.0","devDependencies":{"typescript":"^5.9.3"}}
+{"name":"@crm/shared","private":true,"version":"0.0.0","main":"index.ts","types":"index.ts","devDependencies":{"typescript":"^5.9.3"}}

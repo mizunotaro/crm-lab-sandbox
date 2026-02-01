@@ -15,6 +15,10 @@ importers:
         version: 5.9.3
 
   apps/web:
+    dependencies:
+      '@crm/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
     devDependencies:
       typescript:
         specifier: ^5.9.3
