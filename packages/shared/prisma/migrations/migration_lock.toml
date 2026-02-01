@@ -1,0 +1,8 @@
+{
+  "providers": [
+    {
+      "provider": "postgresql",
+      "url": "postgresql://user:password@localhost:5432/db?schema=public"
+    }
+  ]
+}
