@@ -16,4 +16,6 @@ concurrency:
 
 jobs:
   call:
-    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-watchdog.yml@main
+    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-watchdog.yml@18822dbf6a08d9f579d344a8cac974e047842ffc
+
+
