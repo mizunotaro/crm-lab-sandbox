@@ -30,6 +30,7 @@ jobs:
       # Align to your OpenCode GitHub install selection:
       # Provider: Z.AI Coding Plan, Model: GLM-4.7
       model: "zai-coding-plan/glm-4.7"
+      failing_run_id: ${{ inputs.failing_run_id }}
+      failing_run_url: ${{ inputs.failing_run_url }}
     secrets:
       ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
-
