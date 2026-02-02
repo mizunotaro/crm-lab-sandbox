@@ -1,0 +1,17 @@
+{
+  "labels": [
+    "ai:ready",
+    "ai:blocked",
+    "ai:in-progress",
+    "ai:triage",
+    "ai:approved",
+    "ai:risky-change",
+    "ai:deps",
+    "ai:pr-open"
+  ],
+  "secrets": [
+    "ZAI_API_KEY",
+    "ZHIPU_API_KEY"
+  ],
+  "variables": []
+}
