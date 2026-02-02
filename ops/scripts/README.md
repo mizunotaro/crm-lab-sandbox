@@ -1,6 +1,107 @@
-# Publish Issues Scripts
+# Ops Scripts
 
-This directory contains scripts for publishing issues from SSOT (Single Source of Truth) markdown files to GitHub.
+This directory contains operational scripts for managing AI automation prerequisites and publishing issues.
+
+## check-ai-prereqs.ps1
+
+Preflight check script for AI automation prerequisites (labels, repo variables, and secret names).
+
+### Parameters
+
+- `-Repo` (required): GitHub repository in format "owner/repo" (e.g., "anomalyco/crm-lab-sandbox")
+- `-ConfigPath` (optional): Path to JSON config file (default: `check-ai-prereqs.config.json`)
+- `-JsonOnly` (optional): Only output JSON, skip human-readable summary
+
+### Usage
+
+```powershell
+# Standard run with human-readable output and JSON report
+.\check-ai-prereqs.ps1 -Repo "anomalyco/crm-lab-sandbox"
+
+# JSON-only output (for automation)
+.\check-ai-prereqs.ps1 -Repo "anomalyco/crm-lab-sandbox" -JsonOnly
+
+# Custom configuration file
+.\check-ai-prereqs.ps1 -Repo "anomalyco/crm-lab-sandbox" -ConfigPath "./custom-config.json"
+```
+
+### Features
+
+1. **Label validation**: Checks if all required GitHub labels exist
+2. **Secret validation**: Verifies required secret names exist (does not check values)
+3. **Variable validation**: Verifies required repo variables exist
+4. **Dual output**: Machine-readable JSON report + human-readable summary
+5. **Non-zero exit code**: Returns error code when prerequisites are missing
+6. **Configurable**: Prerequisites defined in `check-ai-prereqs.config.json`
+7. **Permission-aware**: Gracefully handles API permission errors
+
+### Configuration
+
+Edit `check-ai-prereqs.config.json` to customize required prerequisites:
+
+```json
+{
+  "labels": [
+    "ai:ready",
+    "ai:blocked",
+    "ai:in-progress",
+    "ai:triage",
+    "ai:approved",
+    "ai:risky-change",
+    "ai:deps",
+    "ai:pr-open"
+  ],
+  "secrets": [
+    "ZAI_API_KEY",
+    "ZHIPU_API_KEY"
+  ],
+  "variables": []
+}
+```
+
+### Output
+
+The script writes JSON output to `ops/logs/ai-prereqs-YYYYMMDD-HHmmss.json` with the following structure:
+
+```json
+{
+  "timestamp": "2026-02-02T12:59:46.3880926Z",
+  "repo": "owner/repo",
+  "status": "pass|fail|error",
+  "summary": "Human-readable summary",
+  "checks": {
+    "labels": {
+      "required": ["..."],
+      "existing": ["..."],
+      "missing": ["..."],
+      "status": "pass|fail"
+    },
+    "secrets": { ... },
+    "variables": { ... }
+  }
+}
+```
+
+### Exit Codes
+
+- `0`: All prerequisites found
+- `1`: One or more prerequisites missing or API errors
+
+### Verification
+
+```powershell
+# Run preflight check
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\ops\scripts\check-ai-prereqs.ps1 -Repo owner/repo
+
+# Inspect JSON output
+Get-Content .\ops\logs\ai-prereqs-*.json | ConvertFrom-Json | Format-List
+```
+
+---
+
+## publish-issues.ps1
+
+Publishes issues from SSOT (Single Source of Truth) markdown files to GitHub with update-in-place Task Links.
 
 ## publish-issues.ps1
 
