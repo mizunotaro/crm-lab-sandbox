@@ -16,13 +16,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PowerShell
+        uses: microsoft/setup-powershell@v1
+
+      - name: Run AI prerequisites check
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File ./ops/scripts/check-ai-prereqs.ps1 -Repo ${{ github.repository }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   call:
+    needs: preflight
     permissions:
       id-token: write
       contents: write
       pull-requests: write
       issues: write
-    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-orchestrator.yml@v0.1.14
+    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-orchestrator.yml@18822dbf6a08d9f579d344a8cac974e047842ffc
     with:
       # Align to your OpenCode GitHub install selection:
       # Provider: Z.AI Coding Plan, Model: GLM-4.7
@@ -31,3 +47,8 @@ jobs:
       # Either name works; reusable workflow normalizes it.
       ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
       ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
+
+
+
+
+

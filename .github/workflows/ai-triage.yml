@@ -1,10 +1,16 @@
 name: AI Triage
 
 on:
-  workflow_run:
-    workflows: ["CI"]     # JP: あなたのCI workflow名に合わせる / EN: match your CI name
-    types: [completed]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      failing_run_id:
+        description: "Failing CI run ID (from dispatcher)"
+        required: true
+        type: string
+      failing_run_url:
+        description: "Failing CI run URL (optional)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -18,9 +24,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PowerShell
+        uses: microsoft/setup-powershell@v1
+
+      - name: Run AI prerequisites check
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File ./ops/scripts/check-ai-prereqs.ps1 -Repo ${{ github.repository }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   call:
-    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-triage.yml@v0.1.0
+    needs: preflight
+    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-triage.yml@ce0d8fc7f92a7bc65e3bdab0a709516cf0ded1ed
     with:
-      model: "zai/glm-4.7"
+      # Align to your OpenCode GitHub install selection:
+      # Provider: Z.AI Coding Plan, Model: GLM-4.7
+      model: "zai-coding-plan/glm-4.7"
+      failing_run_id: ${{ inputs.failing_run_id }}
+      failing_run_url: ${{ inputs.failing_run_url }}
     secrets:
       ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
