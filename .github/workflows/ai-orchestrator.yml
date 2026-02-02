@@ -23,7 +23,6 @@ jobs:
       pull-requests: write
       issues: write
     uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-orchestrator.yml@18822dbf6a08d9f579d344a8cac974e047842ffc
-    timeout-minutes: 60
     with:
       # Align to your OpenCode GitHub install selection:
       # Provider: Z.AI Coding Plan, Model: GLM-4.7
@@ -32,6 +31,7 @@ jobs:
       # Either name works; reusable workflow normalizes it.
       ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
       ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
+
 
 
 
