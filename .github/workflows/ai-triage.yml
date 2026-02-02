@@ -20,6 +20,7 @@ concurrency:
 jobs:
   call:
     uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-triage.yml@18822dbf6a08d9f579d344a8cac974e047842ffc
+    timeout-minutes: 30
     with:
       # Align to your OpenCode GitHub install selection:
       # Provider: Z.AI Coding Plan, Model: GLM-4.7
