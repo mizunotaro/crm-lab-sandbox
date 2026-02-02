@@ -2,7 +2,7 @@ name: AI Triage Dispatcher (on CI failure)
 
 on:
   workflow_run:
-    workflows: [""ci""]
+    workflows: ["ci"]
     types: [completed]
 
 permissions:
