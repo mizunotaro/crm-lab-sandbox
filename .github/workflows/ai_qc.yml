@@ -1,0 +1,162 @@
+name: AI_QC
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+  check_suite:
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  # Prefer per-PR cancellation; fallback to run_id when PR number isn't available (e.g., check_suite without PR mapping).
+  group: ai-qc-${{ github.repository }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  qc_and_automerge:
+    runs-on: ubuntu-latest
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Resolve PR (from event)
+        id: prctx
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PR=""
+          SHA=""
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            PR="${{ github.event.pull_request.number }}"
+            SHA="${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event_name }}" = "check_suite" ]; then
+            SHA="${{ github.event.check_suite.head_sha }}"
+            PR="$(gh api -H "Accept: application/vnd.github+json" "repos/${{ github.repository }}/commits/${SHA}/pulls" --jq '.[0].number // empty' || true)"
+          fi
+
+          if [ -z "$PR" ]; then
+            echo "No PR associated. Exiting."
+            echo "pr=" >> "$GITHUB_OUTPUT"
+            echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "pr=$PR" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Resolved PR #$PR sha=$SHA"
+
+      - name: Fetch PR metadata & gate (AI PR only)
+        id: gate
+        if: steps.prctx.outputs.pr != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          PR="${{ steps.prctx.outputs.pr }}"
+
+          draft="$(gh api "repos/$GH_REPO/pulls/$PR" --jq '.draft')"
+          head_repo="$(gh api "repos/$GH_REPO/pulls/$PR" --jq '.head.repo.full_name')"
+          head_ref="$(gh api "repos/$GH_REPO/pulls/$PR" --jq '.head.ref')"
+
+          echo "draft=$draft head_repo=$head_repo head_ref=$head_ref"
+
+          if [ "$draft" = "true" ]; then
+            echo "Draft PR - skip"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$head_repo" != "$GH_REPO" ]; then
+            echo "Fork PR - skip"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          case "$head_ref" in
+            opencode/*) ;;
+            *) echo "Not an AI (opencode/*) PR - skip"; echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      - name: Classify risk (workflows/SSOT/deps)
+        id: classify
+        if: steps.gate.outputs.ok == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PR="${{ steps.prctx.outputs.pr }}"
+
+          risky=0
+          deps=0
+          has_ai_deps=0
+
+          labels="$(gh api "repos/$GH_REPO/issues/$PR" --jq '.labels[].name' || true)"
+          while IFS= read -r l; do
+            [ "$l" = "ai:deps" ] && has_ai_deps=1 || true
+          done <<< "$labels"
+
+          files="$(gh api "repos/$GH_REPO/pulls/$PR/files" --paginate --jq '.[].filename')"
+          while IFS= read -r f; do
+            if [[ "$f" == ".github/"* ]]; then risky=1; fi
+            case "$f" in
+              PROJECT_ENV_SPEC.md|PROJECT_CONTEXT.md|AGENTS.md|CHEATSHEET_COMMANDS.md) risky=1 ;;
+            esac
+            case "$f" in
+              package.json|package-lock.json|pnpm-lock.yaml|yarn.lock|poetry.lock|Pipfile.lock|requirements*.txt|Cargo.lock|go.mod|go.sum|Gemfile.lock) deps=1 ;;
+            esac
+          done <<< "$files"
+
+          if [ "$deps" -eq 1 ] && [ "$has_ai_deps" -ne 1 ]; then
+            risky=1
+            echo "Dependency change detected but missing ai:deps label."
+          fi
+
+          echo "risky=$risky" >> "$GITHUB_OUTPUT"
+          echo "deps=$deps" >> "$GITHUB_OUTPUT"
+
+      - name: Update labels (risky)
+        if: steps.classify.outputs.risky == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PR="${{ steps.prctx.outputs.pr }}"
+          gh pr edit "$PR" --repo "$GH_REPO" --remove-label "ai:qc-pass" --remove-label "ai:qc-fail" --remove-label "ai:qc-pending" || true
+          gh pr edit "$PR" --repo "$GH_REPO" --add-label "ai:risky-change" || true
+          gh pr comment "$PR" --repo "$GH_REPO" --body "[AI_QC] Marked as ai:risky-change (workflow/SSOT/deps change). Manual review required." || true
+
+      - name: Enable auto-merge early (non-risky)
+        if: steps.classify.outputs.risky != '1'
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          PR="${{ steps.prctx.outputs.pr }}"
+          gh pr edit "$PR" --repo "$GH_REPO" --remove-label "ai:risky-change" || true
+          gh pr edit "$PR" --repo "$GH_REPO" --add-label "ai:qc-pending" || true
+          gh pr merge "$PR" --repo "$GH_REPO" --auto --squash --delete-branch
+
+      - name: Finalize QC label on check_suite completion
+        if: steps.classify.outputs.risky != '1' && github.event_name == 'check_suite' && steps.prctx.outputs.pr != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          PR="${{ steps.prctx.outputs.pr }}"
+          conclusion="${{ github.event.check_suite.conclusion }}"
+          echo "check_suite conclusion=$conclusion"
+
+          gh pr edit "$PR" --repo "$GH_REPO" --remove-label "ai:qc-pass" --remove-label "ai:qc-fail" || true
+
+          if [ "$conclusion" = "success" ]; then
+            gh pr edit "$PR" --repo "$GH_REPO" --add-label "ai:qc-pass" --remove-label "ai:qc-pending" || true
+          elif [ "$conclusion" = "failure" ] || [ "$conclusion" = "timed_out" ] || [ "$conclusion" = "cancelled" ]; then
+            gh pr edit "$PR" --repo "$GH_REPO" --add-label "ai:qc-fail" --remove-label "ai:qc-pending" || true
+          else
+            echo "Non-terminal or neutral conclusion ($conclusion). Leaving pending."
+          fi
+
