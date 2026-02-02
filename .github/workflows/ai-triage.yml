@@ -21,7 +21,9 @@ jobs:
   call:
     uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-triage.yml@18822dbf6a08d9f579d344a8cac974e047842ffc
     with:
-      model: "zai/glm-4.7"
+      # Align to your OpenCode GitHub install selection:
+      # Provider: Z.AI Coding Plan, Model: GLM-4.7
+      model: "zai-coding-plan/glm-4.7"
     secrets:
       ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
 
