@@ -2,7 +2,7 @@ name: AI Triage Dispatcher (on CI failure)
 
 on:
   workflow_run:
-    workflows: [""ci""]
+    workflows: ["ci"]   # Uncertain: 実際のCI workflowの `name:` に合わせて更新
     types: [completed]
 
 permissions:
@@ -10,24 +10,24 @@ permissions:
   contents: read
 
 concurrency:
-  group: ai-triage-dispatcher-$\{\{ github.repository \}\}
+  group: ai-triage-dispatcher-${{ github.repository }}
   cancel-in-progress: true
 
 jobs:
   dispatch:
-    if: $\{\{ github.event.workflow_run.conclusion == 'failure' \}\}
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch AI Triage (workflow_dispatch)
         shell: bash
         env:
-          GH_TOKEN: $\{\{ github.token \}\}
-          REPO: $\{\{ github.repository \}\}
-          RUN_ID: $\{\{ github.event.workflow_run.id \}\}
-          RUN_URL: $\{\{ github.event.workflow_run.html_url \}\}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
         run: |
           set -euo pipefail
-          echo ""Dispatching AI Triage for failing run: $RUN_ID""
-          gh workflow run -R ""$REPO"" ai-triage.yml \
-            -f failing_run_id=""$RUN_ID"" \
-            -f failing_run_url=""$RUN_URL""
+          echo "Dispatching AI Triage for failing run: $RUN_ID"
+          gh workflow run -R "$REPO" ai-triage.yml \
+            -f failing_run_id="$RUN_ID" \
+            -f failing_run_url="$RUN_URL"
