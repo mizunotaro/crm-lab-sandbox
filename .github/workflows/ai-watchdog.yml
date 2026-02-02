@@ -17,5 +17,6 @@ concurrency:
 jobs:
   call:
     uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-watchdog.yml@18822dbf6a08d9f579d344a8cac974e047842ffc
+    timeout-minutes: 10
 
 
