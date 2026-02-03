@@ -22,7 +22,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup PowerShell
-        uses: actions/setup-powershell@v1
+        run: |
+          set -euo pipefail
+          if ! command -v pwsh >/dev/null 2>&1; then
+            echo 'ERROR: pwsh not found on runner. Remove this check only if your job does not need pwsh.' >&2
+            exit 1
+          fi
+          pwsh -v
 
       - name: Run AI prerequisites check
         id: prereqs
