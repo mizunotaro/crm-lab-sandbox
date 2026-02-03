@@ -110,7 +110,50 @@ if ($LASTEXITCODE -eq 0) {
     if ($missingSecrets.Count -gt 0) {
         Write-Host "  FAIL: Missing secrets: $($missingSecrets -join ', ')" -ForegroundColor Red
     } else {
+        # __preflight_softfail_403_wrapper: treat 403 as WARN and do not fail preflight
+        $is403 = ($secretCheck -match 'HTTP\s*403') -or ($secretCheck -match 'Resource not accessible by integration')
+        $status = if ($is403) { 'warn' } else { 'error' }
+        $level  = if ($is403) { 'WARN' } else { 'ERROR' }
+        if ($is403) {
+          try {
+            $rv = Get-Variable -Name report -ErrorAction SilentlyContinue
+            $cv = Get-Variable -Name config -ErrorAction SilentlyContinue
+            if ($rv -and $null -ne $rv.Value) {
+              $rep = $rv.Value
+              # required は設定ファイルから取得できれば入れる（取得できない場合は無理に触らない）
+              $req = $null
+              if ($cv -and $null -ne $cv.Value) {
+                $cfg = $cv.Value
+                if ($cfg -is [System.Collections.IDictionary] -and $cfg.ContainsKey('secrets')) { $req = $cfg['secrets'] }
+                else { $pp = $cfg.PSObject.Properties.Match('secrets'); if ($pp.Count -gt 0) { $req = $pp[0].Value } }
+              }
+              if ($rep -is [System.Collections.IDictionary]) {
+                if (-not $rep.ContainsKey('secrets')) { $rep['secrets'] = [ordered]@{} }
+                if ($rep['secrets'] -isnot [System.Collections.IDictionary]) { $rep['secrets'] = [ordered]@{} }
+                if ($null -ne $req) { $rep['secrets']['required'] = $req }
+                $rep['secrets']['existing'] = @()
+                $rep['secrets']['missing']  = @()
+                $rep['secrets']['status']   = 'warn'
+                $rep['secrets']['error']    = $secretCheck
+              } else {
+                $p = $rep.PSObject.Properties.Match('secrets')
+                if ($p.Count -gt 0) {
+                  $entry = $p[0].Value
+                  if ($entry -is [System.Collections.IDictionary]) {
+                    if ($null -ne $req) { $entry['required'] = $req }
+                    $entry['existing'] = @()
+                    $entry['missing']  = @()
+                    $entry['status']   = 'warn'
+                    $entry['error']    = $secretCheck
+                  }
+                }
+              }
+            }
+          } catch { }
+          Write-Host "  ${level}: Failed to list secrets (may need additional permissions): $secretCheck" -ForegroundColor Yellow
+        } else {
         Write-Host "  PASS: All required secrets exist" -ForegroundColor Green
+        }
     }
 } else {
     $result.checks.secrets = @{
@@ -123,7 +166,7 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "  ERROR: Failed to list secrets (may need additional permissions): $secretCheck" -ForegroundColor Yellow
 }
 
-# Check variables
+# Check variables test
 Write-Host "`nChecking variables..." -ForegroundColor Cyan
 $variableCheck = & gh variable list --repo $Repo 2>&1
 if ($LASTEXITCODE -eq 0) {
@@ -140,7 +183,50 @@ if ($LASTEXITCODE -eq 0) {
     if ($missingVariables.Count -gt 0) {
         Write-Host "  FAIL: Missing variables: $($missingVariables -join ', ')" -ForegroundColor Red
     } else {
+        # __preflight_softfail_403_wrapper: treat 403 as WARN and do not fail preflight
+        $is403 = ($variableCheck -match 'HTTP\s*403') -or ($variableCheck -match 'Resource not accessible by integration')
+        $status = if ($is403) { 'warn' } else { 'error' }
+        $level  = if ($is403) { 'WARN' } else { 'ERROR' }
+        if ($is403) {
+          try {
+            $rv = Get-Variable -Name report -ErrorAction SilentlyContinue
+            $cv = Get-Variable -Name config -ErrorAction SilentlyContinue
+            if ($rv -and $null -ne $rv.Value) {
+              $rep = $rv.Value
+              # required は設定ファイルから取得できれば入れる（取得できない場合は無理に触らない）
+              $req = $null
+              if ($cv -and $null -ne $cv.Value) {
+                $cfg = $cv.Value
+                if ($cfg -is [System.Collections.IDictionary] -and $cfg.ContainsKey('variables')) { $req = $cfg['variables'] }
+                else { $pp = $cfg.PSObject.Properties.Match('variables'); if ($pp.Count -gt 0) { $req = $pp[0].Value } }
+              }
+              if ($rep -is [System.Collections.IDictionary]) {
+                if (-not $rep.ContainsKey('variables')) { $rep['variables'] = [ordered]@{} }
+                if ($rep['variables'] -isnot [System.Collections.IDictionary]) { $rep['variables'] = [ordered]@{} }
+                if ($null -ne $req) { $rep['variables']['required'] = $req }
+                $rep['variables']['existing'] = @()
+                $rep['variables']['missing']  = @()
+                $rep['variables']['status']   = 'warn'
+                $rep['variables']['error']    = $variableCheck
+              } else {
+                $p = $rep.PSObject.Properties.Match('variables')
+                if ($p.Count -gt 0) {
+                  $entry = $p[0].Value
+                  if ($entry -is [System.Collections.IDictionary]) {
+                    if ($null -ne $req) { $entry['required'] = $req }
+                    $entry['existing'] = @()
+                    $entry['missing']  = @()
+                    $entry['status']   = 'warn'
+                    $entry['error']    = $variableCheck
+                  }
+                }
+              }
+            }
+          } catch { }
+          Write-Host "  ${level}: Failed to list variables (may need additional permissions): $variableCheck" -ForegroundColor Yellow
+        } else {
         Write-Host "  PASS: All required variables exist" -ForegroundColor Green
+        }
     }
 } else {
     $result.checks.variables = @{
@@ -207,3 +293,5 @@ if (-not $JsonOnly) {
 }
 
 exit $exitCode
+
+
