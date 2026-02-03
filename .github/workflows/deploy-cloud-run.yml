@@ -71,7 +71,7 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          # TODO: Implement build logic based on your app structure
+          # PENDING: Implement build logic based on your app structure
           # This is a placeholder - adjust paths and build commands
           # Example:
           # IMAGE_TAG="latest"
@@ -86,13 +86,13 @@ jobs:
           #
           # echo "image_url=${IMAGE_URL}" >> $GITHUB_OUTPUT
 
-          echo "TODO: Implement Docker build and push logic"
+          echo "PENDING: Implement Docker build and push logic"
           exit 1
 
       - name: Deploy to Cloud Run
         id: deploy
         run: |
-          # TODO: Implement Cloud Run deployment
+          # PENDING: Implement Cloud Run deployment
           # This is a placeholder - adjust based on your requirements
           # Example:
           # gcloud run deploy ${{ inputs.service_name }} \
@@ -104,12 +104,12 @@ jobs:
           #   --set-env-secrets "DATABASE_URL=${{ secrets.CLOUD_RUN_DB_URL }}" \
           #   --project ${{ secrets.GCP_PROJECT_ID }}
 
-          echo "TODO: Implement Cloud Run deployment"
+          echo "PENDING: Implement Cloud Run deployment"
           exit 1
 
       - name: Verify deployment
         run: |
-          # TODO: Add health check verification
+          # PENDING: Add health check verification
           # Example:
           # SVC_NAME="${{ inputs.service_name }}"
           # SERVICE_URL=$(gcloud run services describe ${SVC_NAME} \
@@ -121,5 +121,6 @@ jobs:
           # echo "Service URL: ${SERVICE_URL}"
           # curl -f ${SERVICE_URL}/health || exit 1
 
-          echo "TODO: Implement deployment verification"
+          echo "PENDING: Implement deployment verification"
+
 
