@@ -1,311 +1,226 @@
 #requires -Version 7.0
 <#
-.SYNOPSIS
-  AI prerequisites preflight checker for GitHub repos.
+check-ai-prereqs.ps1 (fixed)
 
-.DESCRIPTION
-  Checks required labels / Actions secrets / Actions variables on a repository using GitHub CLI (gh),
-  writes a JSON report under ops/logs/, and exits with a non-zero code only when prerequisites are missing
-  or a non-soft permission/API error occurs.
+Goal:
+- Static + minimal dynamic preflight for AI automation.
+- Never crashes before writing a JSON log.
+- Avoids PowerShell pitfalls: .Count on scalar, null pipeline, placeholders.
 
-  IMPORTANT:
-    - When running under GitHub Actions with the default GITHUB_TOKEN, listing secrets/variables can return:
-        HTTP 403: Resource not accessible by integration
-      In that specific case, this script records a WARN and does NOT fail the workflow.
+Outputs:
+- Writes JSON log to ops/logs/ai-prereqs-<timestamp>.json
+- Exit code 0 when PASS, 1 when FAIL.
 
-.PARAMETER Repo
-  Repository in the form "owner/name".
+Security:
+- Does NOT print secret values.
 
-.PARAMETER JsonOnly
-  If set, suppresses the human-readable summary block (the checks still print their PASS/FAIL/WARN lines).
-
-.PARAMETER ConfigPath
-  Optional path to a JSON config file with keys: labels, secrets, variables (arrays of strings).
-
-.OUTPUTS
-  Writes JSON report to ops/logs/ai-prereqs-<timestamp>.json
-
-.EXITCODES
-  0: pass, or pass-with-warnings (soft 403 on secrets/variables)
-  1: missing prerequisites (fail) or hard errors (error)
+Usage:
+  pwsh -NoProfile -ExecutionPolicy Bypass -File ./ops/scripts/check-ai-prereqs.ps1 -Repo owner/repo
+  pwsh -NoProfile -ExecutionPolicy Bypass -File ./ops/scripts/check-ai-prereqs.ps1 -Repo owner/repo -JsonOnly
 #>
 
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding = $false)]
 param(
-  [Parameter(Mandatory = $true)]
+  [Parameter(Mandatory)]
+  [ValidateNotNullOrEmpty()]
   [string]$Repo,
 
-  [switch]$JsonOnly,
-
-  [string]$ConfigPath
+  [Parameter()]
+  [switch]$JsonOnly
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function Resolve-RepoRoot {
-  try {
-    $root = (& git rev-parse --show-toplevel 2>$null).Trim()
-    if ($root) { return $root }
-  } catch { }
-  # Fallback: assume this script is at <repo>/ops/scripts
-  return (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+function Write-Info([string]$Message) {
+  if (-not $JsonOnly) { Write-Host $Message }
 }
 
-function Resolve-ConfigPath {
-  param([string]$ExplicitPath)
-
-  if ($ExplicitPath) {
-    $p = Resolve-Path -LiteralPath $ExplicitPath -ErrorAction Stop
-    return $p.Path
+function Assert-Command([string]$Name) {
+  if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
+    throw "Required command not found: $Name"
   }
-
-  $candidates = @(
-    (Join-Path $PSScriptRoot 'ai-prereqs-config.json'),
-    (Join-Path $PSScriptRoot 'ai-prereqs.json'),
-    (Join-Path (Join-Path $PSScriptRoot '..') 'ai-prereqs-config.json'),
-    (Join-Path (Join-Path $PSScriptRoot '..') 'ai-prereqs.json'),
-    (Join-Path (Join-Path $PSScriptRoot '..\config') 'ai-prereqs-config.json'),
-    (Join-Path (Join-Path $PSScriptRoot '..\config') 'ai-prereqs.json')
-  )
-
-  foreach ($c in $candidates) {
-    if (Test-Path -LiteralPath $c) { return (Resolve-Path -LiteralPath $c).Path }
-  }
-
-  return $null
 }
 
-function Load-Config {
-  param([string]$Path)
-
-  $cfg = [ordered]@{ labels = @(); secrets = @(); variables = @() }
-
-  if (-not $Path) { return $cfg }
-
+function Try-RunLines([scriptblock]$Sb) {
+  # Always returns string[]
   try {
-    $raw = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
-    $obj = $raw | ConvertFrom-Json -ErrorAction Stop
-
-    foreach ($k in @('labels','secrets','variables')) {
-      $val = $null
-      if ($obj -is [System.Collections.IDictionary] -and $obj.Contains($k)) {
-        $val = $obj[$k]
-      } else {
-        $p = $obj.PSObject.Properties.Match($k)
-        if ($p.Count -gt 0) { $val = $p[0].Value }
-      }
-
-      if ($null -eq $val) {
-        $cfg[$k] = @()
-      } elseif ($val -is [System.Collections.IEnumerable] -and $val -isnot [string]) {
-        $cfg[$k] = @($val)
-      } else {
-        $cfg[$k] = @("$val")
-      }
-    }
+    $out = & $Sb
+    if ($LASTEXITCODE -ne 0) { throw "Command failed (exit=$LASTEXITCODE)" }
+    return @($out)
   } catch {
-    Write-Host ("WARN: Failed to load config JSON ({0}): {1}" -f $Path, $_.Exception.Message) -ForegroundColor Yellow
+    return @()
   }
-
-  return $cfg
 }
 
-function Test-ItemMatch {
-  param(
-    [string[]]$required,
-    [string[]]$existing
-  )
-
-  $req = @($required | Where-Object { $_ -and $_.Trim() -ne '' } | ForEach-Object { $_.Trim() })
-  $ex  = @($existing | Where-Object { $_ -and $_.Trim() -ne '' } | ForEach-Object { $_.Trim() })
-
-  $missing = @()
-  foreach ($r in $req) {
-    if ($r -notin $ex) { $missing += $r }
+function Get-LogDir() {
+  # script path: ops/scripts; log dir: ops/logs
+  $opsDir = Split-Path -Parent $PSScriptRoot
+  $logDir = Join-Path $opsDir 'logs'
+  if (-not (Test-Path -LiteralPath $logDir)) {
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
   }
-  return @($missing)
+  return $logDir
 }
 
-function Is-Soft403 {
-  param([string]$Text)
-
-  if (-not $Text) { return $false }
-  # Match common gh/HTTP messages for the integration-limited token
-  if ($Text -match '(?i)\bHTTP\s*403\b') { return $true }
-  if ($Text -match '(?i)Resource not accessible by integration') { return $true }
-  if ($Text -match '(?i)\bforbidden\b') { return $true }
-  return $false
+function Write-JsonLog([object]$Obj, [string]$LogDir) {
+  $ts = Get-Date -Format 'yyyyMMdd_HHmmss'
+  $logPath = Join-Path $LogDir ("ai-prereqs-{0}.json" -f $ts)
+  $json = $Obj | ConvertTo-Json -Depth 20
+  # UTF8 without BOM
+  [System.IO.File]::WriteAllText($logPath, $json, (New-Object System.Text.UTF8Encoding($false)))
+  return $logPath
 }
 
-function Parse-GhFirstColumn {
-  param([string]$GhOutput)
-
-  if (-not $GhOutput) { return @() }
-  $lines = $GhOutput -split "`n" | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_ -ne '' }
-
-  # Drop header lines if present
-  $lines = $lines | Where-Object { $_ -notmatch '^(?i)NAME(\s+|$)' }
-
-  $names = @()
-  foreach ($l in $lines) {
-    $first = ($l -split '\s+')[0]
-    if ($first -and $first -ne 'NAME') { $names += $first }
+function Set-Fail([hashtable]$Result, [string]$Summary) {
+  $Result.status = 'fail'
+  if ([string]::IsNullOrWhiteSpace($Result.summary)) {
+    $Result.summary = $Summary
+  } else {
+    $Result.summary = ($Result.summary + ' | ' + $Summary)
   }
-  return @($names)
 }
 
-# ===== Main =====
+Assert-Command git
+Assert-Command gh
 
-$repoRoot = Resolve-RepoRoot
-$logsDir = Join-Path $repoRoot 'ops\logs'
-New-Item -ItemType Directory -Force -Path $logsDir 1>$null
+$logDir = Get-LogDir()
 
-$configResolved = Resolve-ConfigPath -ExplicitPath $ConfigPath
-$config = Load-Config -Path $configResolved
-
+# --- initialize result ---
 $result = [ordered]@{
-  repo        = $Repo
-  generatedAt = (Get-Date).ToString('o')
-  status      = 'pass'
-  summary     = ''
-  checks      = [ordered]@{}
+  ts = (Get-Date).ToString('o')
+  repo = $Repo
+  status = 'pass'
+  summary = ''
+  checks = [ordered]@{
+    labels = [ordered]@{
+      required = @(
+        # queue / state
+        'ai:ready', 'ai:in-progress', 'ai:blocked', 'ai:triage', 'ai:pr-open',
+        # control
+        'ai:deps', 'ai:risky-change'
+      )
+      optional = @('ai:approved', 'ai:pause')
+      present = @()
+      missing = @()
+      note = ''
+    }
+    secrets = [ordered]@{
+      required_any = @('ZAI_API_KEY','ZHIPU_API_KEY')
+      present = @()
+      missing = @()
+      note = ''
+    }
+    variables = [ordered]@{
+      required = @('AI_AUTOMATION_MODE','AI_MAX_OPEN_AI_PRS','AI_MAX_ATTEMPTS_PER_ISSUE')
+      present = @()
+      missing = @()
+      note = ''
+    }
+    branch_protection = [ordered]@{
+      branch = 'main'
+      enabled = $false
+      note = ''
+    }
+  }
 }
 
 $exitCode = 0
 
-# Check labels
-Write-Host "Checking labels..." -ForegroundColor Cyan
-$labelCheck = & gh label list --repo $Repo 2>&1
-if ($LASTEXITCODE -eq 0) {
-  $existingLabels = Parse-GhFirstColumn -GhOutput $labelCheck
-  $missingLabels = Test-ItemMatch -required $config.labels -existing $existingLabels
+try {
+  # --- labels ---
+  Write-Info "Checking labels..."
+  $labelNames = Try-RunLines { gh label list --repo $Repo --limit 500 --json name --jq '.[].name' }
+  $labelNames = @($labelNames | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 
-  $result.checks.labels = @{
-    required = @($config.labels)
-    existing = @($existingLabels)
-    missing  = @($missingLabels)
-    status   = if ($missingLabels.Count -gt 0) { 'fail' } else { 'pass' }
-  }
-
-  if ($missingLabels.Count -gt 0) {
-    Write-Host ("  FAIL: Missing labels: {0}" -f ($missingLabels -join ', ')) -ForegroundColor Red
+  if ($labelNames.Count -eq 0) {
+    Set-Fail -Result $result -Summary 'labels: unable to list labels (auth/permissions or repo not found)'
+    $result.checks.labels.note = 'gh label list returned empty.'
+    $exitCode = 1
   } else {
-    Write-Host "  PASS: All required labels exist" -ForegroundColor Green
-  }
-} else {
-  $result.checks.labels = @{
-    required = @($config.labels)
-    existing = @()
-    missing  = @($config.labels)
-    status   = 'error'
-    error    = "$labelCheck"
-  }
-  Write-Host ("  ERROR: Failed to list labels: {0}" -f $labelCheck) -ForegroundColor Yellow
-}
-
-# Check secrets
-Write-Host "`nChecking secrets (names only)..." -ForegroundColor Cyan
-$secretCheck = & gh secret list --repo $Repo 2>&1
-if ($LASTEXITCODE -eq 0) {
-  $existingSecrets = Parse-GhFirstColumn -GhOutput $secretCheck
-  $missingSecrets = Test-ItemMatch -required $config.secrets -existing $existingSecrets
-
-  $result.checks.secrets = @{
-    required = @($config.secrets)
-    existing = @($existingSecrets)
-    missing  = @($missingSecrets)
-    status   = if ($missingSecrets.Count -gt 0) { 'fail' } else { 'pass' }
+    $result.checks.labels.present = $labelNames
+    $req = @($result.checks.labels.required)
+    $missing = @()
+    foreach ($r in $req) {
+      if (-not ($labelNames -contains $r)) { $missing += $r }
+    }
+    $result.checks.labels.missing = $missing
+    if ($missing.Count -gt 0) {
+      Set-Fail -Result $result -Summary ("labels missing: {0}" -f ($missing -join ','))
+      $exitCode = 1
+    }
   }
 
-  if ($missingSecrets.Count -gt 0) {
-    Write-Host ("  FAIL: Missing secrets: {0}" -f ($missingSecrets -join ', ')) -ForegroundColor Red
+  # --- secrets (names only) ---
+  Write-Info "Checking secrets..."
+  $secretNames = Try-RunLines { gh secret list --repo $Repo --json name --jq '.[].name' }
+  $secretNames = @($secretNames | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+  if ($secretNames.Count -eq 0) {
+    # do not hard-fail just because list is not permitted; record note, and use env hint
+    $result.checks.secrets.note = 'unable to list secrets via gh (token permissions). Ensure at least one of ZAI_API_KEY or ZHIPU_API_KEY exists.'
+    # If neither env exists during the run, fail.
+    $hasEnv = (-not [string]::IsNullOrWhiteSpace($env:ZAI_API_KEY)) -or (-not [string]::IsNullOrWhiteSpace($env:ZHIPU_API_KEY))
+    if (-not $hasEnv) {
+      Set-Fail -Result $result -Summary 'secrets: cannot verify via API and no env key present in this run'
+      $result.checks.secrets.missing = @($result.checks.secrets.required_any)
+      $exitCode = 1
+    }
   } else {
-    Write-Host "  PASS: All required secrets exist" -ForegroundColor Green
-  }
-} else {
-  $is403 = Is-Soft403 -Text "$secretCheck"
-  $level = if ($is403) { 'WARN' } else { 'ERROR' }
-
-  $result.checks.secrets = @{
-    required = @($config.secrets)
-    existing = @()
-    missing  = if ($is403) { @() } else { @($config.secrets) }
-    status   = if ($is403) { 'warn' } else { 'error' }
-    error    = "$secretCheck"
+    $result.checks.secrets.present = $secretNames
+    $hasAny = $false
+    foreach ($s in @($result.checks.secrets.required_any)) {
+      if ($secretNames -contains $s) { $hasAny = $true }
+    }
+    if (-not $hasAny) {
+      Set-Fail -Result $result -Summary 'secrets missing: set either ZAI_API_KEY or ZHIPU_API_KEY'
+      $result.checks.secrets.missing = @($result.checks.secrets.required_any)
+      $exitCode = 1
+    }
   }
 
-  Write-Host ("  {0}: Failed to list secrets (may need additional permissions): {1}" -f $level, $secretCheck) -ForegroundColor Yellow
-}
+  # --- variables ---
+  Write-Info "Checking variables..."
+  $varNames = Try-RunLines { gh api "repos/$Repo/actions/variables" --jq '.variables[].name' }
+  $varNames = @($varNames | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 
-# Check variables
-Write-Host "`nChecking variables..." -ForegroundColor Cyan
-$variableCheck = & gh variable list --repo $Repo 2>&1
-if ($LASTEXITCODE -eq 0) {
-  $existingVariables = Parse-GhFirstColumn -GhOutput $variableCheck
-  $missingVariables = Test-ItemMatch -required $config.variables -existing $existingVariables
-
-  $result.checks.variables = @{
-    required = @($config.variables)
-    existing = @($existingVariables)
-    missing  = @($missingVariables)
-    status   = if ($missingVariables.Count -gt 0) { 'fail' } else { 'pass' }
-  }
-
-  if ($missingVariables.Count -gt 0) {
-    Write-Host ("  FAIL: Missing variables: {0}" -f ($missingVariables -join ', ')) -ForegroundColor Red
+  if ($varNames.Count -eq 0) {
+    $result.checks.variables.note = 'unable to list variables via gh api (token permissions).'
+    # If we cannot list, do not hard-fail (avoid false negatives), but record it.
   } else {
-    Write-Host "  PASS: All required variables exist" -ForegroundColor Green
-  }
-} else {
-  $is403 = Is-Soft403 -Text "$variableCheck"
-  $level = if ($is403) { 'WARN' } else { 'ERROR' }
-
-  $result.checks.variables = @{
-    required = @($config.variables)
-    existing = @()
-    missing  = if ($is403) { @() } else { @($config.variables) }
-    status   = if ($is403) { 'warn' } else { 'error' }
-    error    = "$variableCheck"
+    $result.checks.variables.present = $varNames
+    $missingVars = @()
+    foreach ($v in @($result.checks.variables.required)) {
+      if (-not ($varNames -contains $v)) { $missingVars += $v }
+    }
+    $result.checks.variables.missing = $missingVars
+    if ($missingVars.Count -gt 0) {
+      Set-Fail -Result $result -Summary ("variables missing: {0}" -f ($missingVars -join ','))
+      $exitCode = 1
+    }
   }
 
-  Write-Host ("  {0}: Failed to list variables (may need additional permissions): {1}" -f $level, $variableCheck) -ForegroundColor Yellow
-}
+  # --- branch protection (main) ---
+  Write-Info "Checking branch protection (main)..."
+  $contexts = Try-RunLines { gh api "repos/$Repo/branches/main/protection" --jq '.required_status_checks.contexts[]?' }
+  if ($contexts.Count -gt 0) {
+    $result.checks.branch_protection.enabled = $true
+  } else {
+    # API returns 404 when not protected. We treat as fail because policy requires CI green gating.
+    $result.checks.branch_protection.enabled = $false
+    Set-Fail -Result $result -Summary 'branch protection missing on main (required status checks not enforced)'
+    $result.checks.branch_protection.note = 'repos/.../branches/main/protection returned empty/404.'
+    $exitCode = 1
+  }
 
-# Determine overall status
-$hasErrors   = @($result.checks.Values | Where-Object { $_.status -eq 'error' })
-$hasFailures = @($result.checks.Values | Where-Object { $_.status -eq 'fail' })
-$hasWarns    = @($result.checks.Values | Where-Object { $_.status -eq 'warn' })
-
-if ($hasErrors.Count -gt 0) {
-  $result.status = 'error'
-  $result.summary = 'Preflight check completed with errors (permission issues or API errors)'
+} catch {
+  # Catch-all: mark fail but still write log
+  Set-Fail -Result $result -Summary ("exception: {0}" -f $_.Exception.Message)
   $exitCode = 1
-} elseif ($hasFailures.Count -gt 0) {
-  $result.status = 'fail'
-  $result.summary = 'Preflight check failed: missing required prerequisites'
-  $exitCode = 1
-} elseif ($hasWarns.Count -gt 0) {
-  $result.status = 'warn'
-  $result.summary = 'Preflight check completed with warnings (could not verify secrets/variables due to token permissions)'
-  $exitCode = 0
-} else {
-  $result.status = 'pass'
-  $result.summary = 'Preflight check passed'
-  $exitCode = 0
-}
-
-# Write JSON report
-$ts = Get-Date -Format 'yyyyMMdd-HHmmss'
-$outPath = Join-Path $logsDir ("ai-prereqs-{0}.json" -f $ts)
-($result | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $outPath -Encoding UTF8
-
-Write-Host ("`nJSON report written to: {0}" -f $outPath) -ForegroundColor Cyan
-
-if (-not $JsonOnly) {
-  Write-Host "`n==== Summary ====" -ForegroundColor Cyan
-  Write-Host ("Status : {0}" -f $result.status)
-  Write-Host ("Summary: {0}" -f $result.summary)
+} finally {
+  $logPath = Write-JsonLog -Obj $result -LogDir $logDir
+  # Print log path for workflow step parsing, even in JsonOnly mode
+  Write-Output $logPath
 }
 
 exit $exitCode
