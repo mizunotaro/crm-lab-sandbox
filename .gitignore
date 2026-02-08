@@ -12,3 +12,5 @@ expo/
 docs/ops/
 docs/ai/
 ops/logs/
+_probe/
+*.bak_*
