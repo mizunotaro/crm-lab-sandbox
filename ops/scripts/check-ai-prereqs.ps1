@@ -190,17 +190,6 @@ try {
       }
     }
   } else {
-      # do not hard-fail just because list is not permitted; record note, and use env hint
-      $result.checks.secrets.note = 'unable to list secrets via gh (token permissions). Ensure at least one of ZAI_API_KEY or ZHIPU_API_KEY exists.'
-      # If neither env exists during the run, fail.
-      $hasEnv = (-not [string]::IsNullOrWhiteSpace($env:ZAI_API_KEY)) -or (-not [string]::IsNullOrWhiteSpace($env:ZHIPU_API_KEY))
-      if (-not $hasEnv) {
-        Set-Fail -Result $result -Summary 'secrets: cannot verify via API and no env key present in this run'
-        $result.checks.secrets.missing = @($result.checks.secrets.required_any)
-        $exitCode = 1
-      }
-    }
-  } else {
     $result.checks.secrets.present = $secretNames
     $hasAny = $false
     foreach ($s in @($result.checks.secrets.required_any)) {
@@ -271,4 +260,3 @@ try {
 }
 
 exit $exitCode
-
