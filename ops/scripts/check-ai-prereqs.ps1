@@ -84,7 +84,7 @@ function Set-Fail([hashtable]$Result, [string]$Summary) {
 Assert-Command git
 Assert-Command gh
 
-$logDir = Get-LogDir()
+$logDir = Get-LogDir
 
 # --- initialize result ---
 $result = [ordered]@{
@@ -224,3 +224,4 @@ try {
 }
 
 exit $exitCode
+
