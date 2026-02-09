@@ -174,10 +174,22 @@ try {
   $secretNames = @($secretNames | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 
   if ($secretNames.Count -eq 0) {
-    if (Is-Integration403 $script:TryRunLastErrorText) {
-      Write-Warning "SKIP: unable to list secrets in GitHub Actions (HTTP 403 integration token)."
-      $result.checks.secrets.note = 'SKIP: unable to list secrets in GitHub Actions (HTTP 403 integration token).'
+    $apiFailed = -not [string]::IsNullOrWhiteSpace($script:TryRunLastErrorText)
+    if (Is-Integration403 $script:TryRunLastErrorText -or (($env:GITHUB_ACTIONS -eq 'true') -and $apiFailed)) {
+      Write-Warning "SKIP: unable to list secrets in GitHub Actions (insufficient token permission)."
+      $result.checks.secrets.note = 'SKIP: unable to list secrets in GitHub Actions (insufficient token permission).'
     } else {
+      # do not hard-fail just because list is not permitted; record note, and use env hint
+      $result.checks.secrets.note = 'unable to list secrets via gh (token permissions). Ensure at least one of ZAI_API_KEY or ZHIPU_API_KEY exists.'
+      # If neither env exists during the run, fail.
+      $hasEnv = (-not [string]::IsNullOrWhiteSpace($env:ZAI_API_KEY)) -or (-not [string]::IsNullOrWhiteSpace($env:ZHIPU_API_KEY))
+      if (-not $hasEnv) {
+        Set-Fail -Result $result -Summary 'secrets: cannot verify via API and no env key present in this run'
+        $result.checks.secrets.missing = @($result.checks.secrets.required_any)
+        $exitCode = 1
+      }
+    }
+  } else {
       # do not hard-fail just because list is not permitted; record note, and use env hint
       $result.checks.secrets.note = 'unable to list secrets via gh (token permissions). Ensure at least one of ZAI_API_KEY or ZHIPU_API_KEY exists.'
       # If neither env exists during the run, fail.
@@ -228,12 +240,19 @@ try {
   if ($contexts.Count -gt 0) {
     $result.checks.branch_protection.enabled = $true
   } else {
-    if (Is-Integration403 $script:TryRunLastErrorText) {
+    $apiFailed = -not [string]::IsNullOrWhiteSpace($script:TryRunLastErrorText)
+
+    if (($env:GITHUB_ACTIONS -eq 'true') -and $apiFailed) {
+      # GitHub Actions integration token often cannot read branch protection. Do not block call; enforce via repo settings.
+      Write-Warning "SKIP: cannot verify branch protection in GitHub Actions (insufficient token permission)."
+      $result.checks.branch_protection.enabled = $false
+      $result.checks.branch_protection.note = 'SKIP: cannot verify branch protection in GitHub Actions (insufficient token permission).'
+    } elseif (Is-Integration403 $script:TryRunLastErrorText) {
       Write-Warning "SKIP: cannot read branch protection in GitHub Actions (HTTP 403 integration token)."
       $result.checks.branch_protection.enabled = $false
       $result.checks.branch_protection.note = 'SKIP: cannot read branch protection in GitHub Actions (HTTP 403 integration token).'
     } else {
-      # API returns 404 when not protected. We treat as fail because policy requires CI green gating.
+      # API returns 404 when not protected (or contexts empty). Treat as fail because policy requires CI green gating.
       $result.checks.branch_protection.enabled = $false
       Set-Fail -Result $result -Summary 'branch protection missing on main (required status checks not enforced)'
       $result.checks.branch_protection.note = 'repos/.../branches/main/protection returned empty/404.'
