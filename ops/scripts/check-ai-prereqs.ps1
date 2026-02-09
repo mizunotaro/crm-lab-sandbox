@@ -38,6 +38,7 @@ function Write-Info([string]$Message) {
 
 $script:TryRunLastErrorText = ''
 
+
 function Assert-Command([string]$Name) {
   if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
     throw "Required command not found: $Name"
@@ -48,7 +49,7 @@ function Try-RunLines([scriptblock]$Sb) {
   # Always returns string[]
   try {
     $script:TryRunLastErrorText = ''
-    # capture stderr to avoid noisy GH Actions logs; keep for diagnosis
+    # Capture stderr to keep Actions logs clean; keep for diagnosis.
     $out = & $Sb 2>&1
     if ($LASTEXITCODE -ne 0) {
       $script:TryRunLastErrorText = (@($out) -join "`n").Trim()
@@ -67,6 +68,7 @@ function Is-Integration403([string]$Text) {
   if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
   return ($Text -match 'HTTP 403') -and ($Text -match 'Resource not accessible by integration')
 }
+
 
 function Get-LogDir() {
   # script path: ops/scripts; log dir: ops/logs
@@ -173,7 +175,7 @@ try {
 
   if ($secretNames.Count -eq 0) {
     if (Is-Integration403 $script:TryRunLastErrorText) {
-      # In GH Actions preflight, integration token may not access secrets list. Do not block call.
+      Write-Warning "SKIP: unable to list secrets in GitHub Actions (HTTP 403 integration token)."
       $result.checks.secrets.note = 'SKIP: unable to list secrets in GitHub Actions (HTTP 403 integration token).'
     } else {
       # do not hard-fail just because list is not permitted; record note, and use env hint
@@ -227,7 +229,7 @@ try {
     $result.checks.branch_protection.enabled = $true
   } else {
     if (Is-Integration403 $script:TryRunLastErrorText) {
-      # Integration token often cannot read branch protection; do not block call.
+      Write-Warning "SKIP: cannot read branch protection in GitHub Actions (HTTP 403 integration token)."
       $result.checks.branch_protection.enabled = $false
       $result.checks.branch_protection.note = 'SKIP: cannot read branch protection in GitHub Actions (HTTP 403 integration token).'
     } else {
