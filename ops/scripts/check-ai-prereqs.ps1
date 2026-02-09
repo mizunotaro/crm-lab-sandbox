@@ -36,6 +36,8 @@ function Write-Info([string]$Message) {
   if (-not $JsonOnly) { Write-Host $Message }
 }
 
+$script:TryRunLastErrorText = ''
+
 function Assert-Command([string]$Name) {
   if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
     throw "Required command not found: $Name"
@@ -45,12 +47,25 @@ function Assert-Command([string]$Name) {
 function Try-RunLines([scriptblock]$Sb) {
   # Always returns string[]
   try {
-    $out = & $Sb
-    if ($LASTEXITCODE -ne 0) { throw "Command failed (exit=$LASTEXITCODE)" }
+    $script:TryRunLastErrorText = ''
+    # capture stderr to avoid noisy GH Actions logs; keep for diagnosis
+    $out = & $Sb 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      $script:TryRunLastErrorText = (@($out) -join "`n").Trim()
+      throw "Command failed (exit=$LASTEXITCODE)"
+    }
     return @($out)
   } catch {
+    if ([string]::IsNullOrWhiteSpace($script:TryRunLastErrorText)) {
+      $script:TryRunLastErrorText = ($_.ToString()).Trim()
+    }
     return @()
   }
+}
+
+function Is-Integration403([string]$Text) {
+  if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
+  return ($Text -match 'HTTP 403') -and ($Text -match 'Resource not accessible by integration')
 }
 
 function Get-LogDir() {
@@ -157,14 +172,19 @@ try {
   $secretNames = @($secretNames | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 
   if ($secretNames.Count -eq 0) {
-    # do not hard-fail just because list is not permitted; record note, and use env hint
-    $result.checks.secrets.note = 'unable to list secrets via gh (token permissions). Ensure at least one of ZAI_API_KEY or ZHIPU_API_KEY exists.'
-    # If neither env exists during the run, fail.
-    $hasEnv = (-not [string]::IsNullOrWhiteSpace($env:ZAI_API_KEY)) -or (-not [string]::IsNullOrWhiteSpace($env:ZHIPU_API_KEY))
-    if (-not $hasEnv) {
-      Set-Fail -Result $result -Summary 'secrets: cannot verify via API and no env key present in this run'
-      $result.checks.secrets.missing = @($result.checks.secrets.required_any)
-      $exitCode = 1
+    if (Is-Integration403 $script:TryRunLastErrorText) {
+      # In GH Actions preflight, integration token may not access secrets list. Do not block call.
+      $result.checks.secrets.note = 'SKIP: unable to list secrets in GitHub Actions (HTTP 403 integration token).'
+    } else {
+      # do not hard-fail just because list is not permitted; record note, and use env hint
+      $result.checks.secrets.note = 'unable to list secrets via gh (token permissions). Ensure at least one of ZAI_API_KEY or ZHIPU_API_KEY exists.'
+      # If neither env exists during the run, fail.
+      $hasEnv = (-not [string]::IsNullOrWhiteSpace($env:ZAI_API_KEY)) -or (-not [string]::IsNullOrWhiteSpace($env:ZHIPU_API_KEY))
+      if (-not $hasEnv) {
+        Set-Fail -Result $result -Summary 'secrets: cannot verify via API and no env key present in this run'
+        $result.checks.secrets.missing = @($result.checks.secrets.required_any)
+        $exitCode = 1
+      }
     }
   } else {
     $result.checks.secrets.present = $secretNames
@@ -206,11 +226,17 @@ try {
   if ($contexts.Count -gt 0) {
     $result.checks.branch_protection.enabled = $true
   } else {
-    # API returns 404 when not protected. We treat as fail because policy requires CI green gating.
-    $result.checks.branch_protection.enabled = $false
-    Set-Fail -Result $result -Summary 'branch protection missing on main (required status checks not enforced)'
-    $result.checks.branch_protection.note = 'repos/.../branches/main/protection returned empty/404.'
-    $exitCode = 1
+    if (Is-Integration403 $script:TryRunLastErrorText) {
+      # Integration token often cannot read branch protection; do not block call.
+      $result.checks.branch_protection.enabled = $false
+      $result.checks.branch_protection.note = 'SKIP: cannot read branch protection in GitHub Actions (HTTP 403 integration token).'
+    } else {
+      # API returns 404 when not protected. We treat as fail because policy requires CI green gating.
+      $result.checks.branch_protection.enabled = $false
+      Set-Fail -Result $result -Summary 'branch protection missing on main (required status checks not enforced)'
+      $result.checks.branch_protection.note = 'repos/.../branches/main/protection returned empty/404.'
+      $exitCode = 1
+    }
   }
 
 } catch {
