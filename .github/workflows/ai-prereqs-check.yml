@@ -33,7 +33,7 @@ jobs:
       - name: Run AI prerequisites check
         id: prereqs
         run: |
-          pwsh -NoProfile -ExecutionPolicy Bypass -File ./ops/scripts/check-ai-prereqs.ps1 -Repo ${{ github.repository }} -JsonOnly
+          pwsh -NoProfile -ExecutionPolicy Bypass -File ./ops/scripts/check-ai-prereqs.ps1 -Repo ${{ github.repository }} -JsonOnly -LogDir ./ops/logs
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -41,9 +41,23 @@ jobs:
         if: always() && steps.prereqs.outcome != 'skipped'
         id: parse
         run: |
-          # Get the latest log file
-          LOG_FILE=$(ls -t ./ops/logs/ai-prereqs-*.json | head -1)
+          # Get the log file path (preferred: output from the pwsh step; fallback: search known directories)
+          LOG_FILE="${{ steps.prereqs.outputs.log_file }}"
+          if [ -z "$LOG_FILE" ] || [ ! -f "$LOG_FILE" ]; then
+            LOG_FILE="$(ls -t ./ops/logs/ai-prereqs-*.json ./ops/scripts/ai-prereqs-*.json 2>/dev/null | head -1 || true)"
+          fi
+          if [ -z "$LOG_FILE" ] || [ ! -f "$LOG_FILE" ]; then
+            echo "ERROR: ai-prereqs JSON log not found (expected in ./ops/logs or ./ops/scripts, or via steps.prereqs.outputs.log_file)." >&2
+            echo "::group::debug: ls -la ./ops/logs" && ls -la ./ops/logs 2>/dev/null || true && echo "::endgroup::"
+            echo "::group::debug: ls -la ./ops/scripts" && ls -la ./ops/scripts 2>/dev/null || true && echo "::endgroup::"
+            exit 2
+          fi
           echo "log_file=$LOG_FILE" >> $GITHUB_OUTPUT
+
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "ERROR: jq not found on runner." >&2
+            exit 1
+          fi
 
           # Parse JSON
           STATUS=$(jq -r '.status' "$LOG_FILE")

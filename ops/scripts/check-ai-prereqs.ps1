@@ -7,8 +7,8 @@ Goal:
 - Avoids PowerShell pitfalls: .Count on scalar, null pipeline, placeholders.
 
 Outputs:
-- Writes JSON log alongside this script: ai-prereqs-<timestamp>-<pid>.json
-- Writes text log alongside this script: check-ai-prereqs-<timestamp>-<pid>.log
+- Writes JSON log under repo ./ops/logs when possible (fallback: script dir/temp): ai-prereqs-<timestamp>-<pid>.json
+- Writes text log under repo ./ops/logs when possible (fallback: script dir/temp): check-ai-prereqs-<timestamp>-<pid>.log
 - Prints the log path to stdout (for workflow step parsing).
 - Exit code 0 when PASS, 1 when FAIL.
 
@@ -29,7 +29,10 @@ param(
   [string]$Repo = '',
 
   [Parameter()]
-  [switch]$JsonOnly
+  [switch]$JsonOnly,
+
+  [Parameter()]
+  [string]$LogDir = ''
 )
 
 Set-StrictMode -Version Latest
@@ -94,9 +97,46 @@ function Is-Integration403([string]$Text) {
   return ($Text -match 'HTTP 403') -and ($Text -match 'Resource not accessible by integration')
 }
 
-function Resolve-LogDir() {
-  # Per user request: prefer the script directory (same folder as this .ps1).
+function Find-RepoRootFromPath([string]$StartDir) {
+  if ([string]::IsNullOrWhiteSpace($StartDir)) { return '' }
+  $dir = $StartDir
+  for ($i = 0; $i -lt 8; $i++) {
+    try {
+      # Typical repo markers
+      if (Test-Path -LiteralPath (Join-Path $dir '.git')) { return $dir }
+      if (Test-Path -LiteralPath (Join-Path $dir '.github')) { return $dir }
+    } catch { }
+    try {
+      $parent = Split-Path -Parent $dir
+      if ([string]::IsNullOrWhiteSpace($parent) -or ($parent -eq $dir)) { break }
+      $dir = $parent
+    } catch { break }
+  }
+  return ''
+}
+
+function Resolve-LogDir([string]$LogDirOverride) {
+  # Default (stable): write under repo workspace at ./ops/logs when possible.
+  # Fallbacks: script directory, current directory, runner temp.
   $candidates = New-Object System.Collections.Generic.List[string]
+
+  if (-not [string]::IsNullOrWhiteSpace($LogDirOverride)) {
+    $candidates.Add($LogDirOverride)
+  }
+
+  # Prefer repo-root/ops/logs if we can locate the repo root.
+  $repoRoot = ''
+  try {
+    if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+      $repoRoot = Find-RepoRootFromPath $PSScriptRoot
+    }
+  } catch { }
+  if ([string]::IsNullOrWhiteSpace($repoRoot)) {
+    try { $repoRoot = Find-RepoRootFromPath (Get-Location).Path } catch { }
+  }
+  if (-not [string]::IsNullOrWhiteSpace($repoRoot)) {
+    $candidates.Add((Join-Path $repoRoot 'ops/logs'))
+  }
 
   try {
     if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
@@ -111,7 +151,10 @@ function Resolve-LogDir() {
 
   foreach ($dir in $candidates) {
     try {
-      # sanity: verify we can write
+      # Ensure directory exists (best-effort).
+      New-Item -ItemType Directory -Path $dir -Force | Out-Null
+
+      # Sanity: verify we can write.
       $probe = Join-Path $dir (".probe-{0}.tmp" -f ([Guid]::NewGuid().ToString('n')))
       [System.IO.File]::WriteAllText($probe, "ok", (New-Object System.Text.UTF8Encoding($false)))
       Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
@@ -121,7 +164,7 @@ function Resolve-LogDir() {
     }
   }
 
-  # absolute last resort
+  # Absolute last resort
   return '.'
 }
 
@@ -188,7 +231,7 @@ $result = [ordered]@{
 }
 
 $exitCode = 0
-$logDir = Resolve-LogDir
+$logDir = Resolve-LogDir $LogDir
 
 # Create a plain text log in the same directory as the JSON (prefer script dir)
 try {
@@ -360,7 +403,7 @@ try {
   $logPath = ''
   try {
     # Per user request: write alongside script first; fallback is handled by Resolve-LogDir.
-    if ([string]::IsNullOrWhiteSpace($logDir)) { $logDir = Resolve-LogDir }
+    if ([string]::IsNullOrWhiteSpace($logDir)) { $logDir = Resolve-LogDir $LogDir }
     $logPath = Write-JsonLog -Obj $result -LogDir $logDir
   } catch {
     # Last resort: emit JSON to stdout so CI has *something* actionable.
@@ -369,6 +412,13 @@ try {
   }
 
   if (-not [string]::IsNullOrWhiteSpace($logPath)) {
+    try {
+      # If running in GitHub Actions, expose the log path as a step output (more robust than searching with ls).
+      if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_OUTPUT)) {
+        Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8 -Value ("log_file={0}" -f $logPath)
+      }
+    } catch { }
+
     # Print log path for workflow step parsing, even in JsonOnly mode
     Write-Output $logPath
   }
