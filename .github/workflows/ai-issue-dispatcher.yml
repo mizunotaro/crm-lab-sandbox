@@ -17,12 +17,9 @@ concurrency:
 jobs:
   dispatch:
     if: ${{ github.event.label.name == 'ai:ready' }}
-    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-orchestrator.yml@main
+    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-orchestrator.yml@bcfd8e53eadd739fc255847d007f83e7b6ac8565
     with:
-      # SSOT: primary model
-      model: "zai/glm-4.7"
-      # Pin OpenCode version for stability (can be updated by SSOT later)
-      opencode_version: "1.1.44"
-      job_timeout_minutes: 45
-      opencode_step_timeout_minutes: 20
-    secrets: inherit
+      model: 'zai/glm-4.7'
+    secrets:
+      ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+
