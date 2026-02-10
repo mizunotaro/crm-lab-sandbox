@@ -4,7 +4,7 @@
 
 ## Context
 
-Issue #403 was raised by the AI Watchdog system indicating frequent CI failures (20 failures detected). The AI Watchdog recommended setting `AI_AUTOMATION_MODE=PAUSE` and running triage.
+Issues #402, #403, and #404 were raised by the AI Watchdog system indicating frequent CI failures (20 failures detected). The AI Watchdog recommended setting `AI_AUTOMATION_MODE=PAUSE` and running triage.
 
 ### Symptom
 - Frequent CI failures occurring in AI-generated PRs
@@ -61,7 +61,10 @@ Issue #403 was raised by the AI Watchdog system indicating frequent CI failures 
 
 ## References
 
+- Issue #402: AI Watchdog: PAUSE recommended (failures=20)
 - Issue #403: AI Watchdog: PAUSE recommended (failures=20)
+- Issue #404: AI Watchdog: PAUSE recommended (failures=20)
+- PR #440: PR: Pause AI automation (20 CI failures) - addresses #403
 - `docs/ai/PROJECT_ENV_SPEC.md` - Operational configuration SSOT
 - `AGENTS.md` - Section 3.3 Multi-agent workflow
 - `ops/scripts/check-ai-prereqs.ps1` - Prerequisites check script

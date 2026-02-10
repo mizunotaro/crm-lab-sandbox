@@ -47,4 +47,4 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File ./ops/scripts/check-ai-prereqs.ps1
 
 | Date | Variable | Old Value | New Value | Reason |
 |------|----------|-----------|-----------|--------|
-| 2026-02-10 | `AI_AUTOMATION_MODE` | - | `PAUSE` | Issue #403 - PAUSE recommended (failures=20) |
+| 2026-02-10 | `AI_AUTOMATION_MODE` | - | `PAUSE` | Issue #402, #403, #404 - PAUSE recommended (failures=20) |
