@@ -22,23 +22,60 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # NOTE: Do NOT use microsoft/setup-powershell here.
+      # GitHub-hosted runners already include pwsh; we verify it exists (fail-fast).
       - name: Verify pwsh is available (fail-fast)
         shell: bash
         run: |
           set -euo pipefail
           if ! command -v pwsh >/dev/null 2>&1; then
-            echo "::error::pwsh not found on runner (ubuntu-latest)."
-            echo "::error::This workflow requires pwsh preinstalled (or change runner / add explicit install in a separately approved change)."
+            echo "ERROR: pwsh not found on runner. This workflow expects runner-provided PowerShell."
             exit 1
           fi
-          pwsh -NoProfile -Command '$PSVersionTable.PSVersion'
+          echo "OK: pwsh found at: $(command -v pwsh)"
+          pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+
+      - name: Parser check (fail-fast) for check-ai-prereqs.ps1
+        shell: pwsh
+        run: |
+          $path = "ops/scripts/check-ai-prereqs.ps1"
+          if (-not (Test-Path -LiteralPath $path)) {
+            Write-Error "Missing script: $path"
+            exit 1
+          }
+          $tokens=$null; $errors=$null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path), [ref]$tokens, [ref]$errors)
+          if (@($errors).Count -gt 0) {
+            $errors | Format-List *
+            throw "ParserError detected in $path"
+          }
+          Write-Host "OK: Parser check passed for $path"
 
       - name: Run AI prerequisites check
         shell: pwsh
         run: |
-          ./ops/scripts/check-ai-prereqs.ps1 -Repo '${{ github.repository }}'
+          pwsh -NoProfile -ExecutionPolicy Bypass -File ./ops/scripts/check-ai-prereqs.ps1 -Repo "${{ github.repository }}"
         env:
           GH_TOKEN: ${{ github.token }}
+
+      # Always emit the ai-prereqs JSON so failures are diagnosable without reruns.
+      - name: Dump ai-prereqs JSON (always)
+        if: always()
+        shell: pwsh
+        run: |
+          $dir = "ops/logs"
+          if (-not (Test-Path -LiteralPath $dir)) {
+            Write-Host "No ops/logs directory found."
+            exit 0
+          }
+          $p = Get-ChildItem -Path $dir -Filter 'ai-prereqs-*.json' -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $p) {
+            Write-Host "No ai-prereqs JSON found under $dir."
+            exit 0
+          }
+          Write-Host "ai-prereqs log: $($p.FullName)"
+          Get-Content -LiteralPath $p.FullName -Raw
 
   call:
     needs: preflight
