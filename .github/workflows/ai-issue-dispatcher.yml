@@ -22,4 +22,3 @@ jobs:
       model: 'zai/glm-4.7'
     secrets:
       ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
-
