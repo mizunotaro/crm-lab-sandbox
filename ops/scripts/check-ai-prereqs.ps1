@@ -1,29 +1,32 @@
-#requires -Version 7.0
 <#
-check-ai-prereqs.ps1 (fixed)
+check-ai-prereqs.ps1 (v1.0.2)
 
 Goal:
 - Static + minimal dynamic preflight for AI automation.
-- Never crashes before writing a JSON log.
+- Always writes a JSON log (even on failure).
 - Avoids PowerShell pitfalls: .Count on scalar, null pipeline, placeholders.
 
 Outputs:
-- Writes JSON log to ops/logs/ai-prereqs-<timestamp>.json
+- Writes JSON log alongside this script: ai-prereqs-<timestamp>-<pid>.json
+- Writes text log alongside this script: check-ai-prereqs-<timestamp>-<pid>.log
+- Prints the log path to stdout (for workflow step parsing).
 - Exit code 0 when PASS, 1 when FAIL.
 
 Security:
 - Does NOT print secret values.
 
 Usage:
-  pwsh -NoProfile -ExecutionPolicy Bypass -File ./ops/scripts/check-ai-prereqs.ps1 -Repo owner/repo
-  pwsh -NoProfile -ExecutionPolicy Bypass -File ./ops/scripts/check-ai-prereqs.ps1 -Repo owner/repo -JsonOnly
+  pwsh -NoProfile -ExecutionPolicy Bypass -File ./check-ai-prereqs.ps1 -Repo owner/repo
+  pwsh -NoProfile -ExecutionPolicy Bypass -File ./check-ai-prereqs.ps1 -Repo owner/repo -JsonOnly
+
+Notes:
+- We intentionally avoid '#requires -Version 7.0' so we can still produce a log on older PowerShell versions.
 #>
 
 [CmdletBinding(PositionalBinding = $false)]
 param(
-  [Parameter(Mandatory)]
-  [ValidateNotNullOrEmpty()]
-  [string]$Repo,
+  [Parameter()]
+  [string]$Repo = '',
 
   [Parameter()]
   [switch]$JsonOnly
@@ -31,13 +34,32 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+
+# Run identifier reused across all outputs for easy correlation
+$script:RunId = Get-Date -Format 'yyyyMMdd_HHmmss_fff'
+$script:TextLogPath = ''
+
+function Append-TextLogLine([string]$Message) {
+  try {
+    if (-not [string]::IsNullOrWhiteSpace($script:TextLogPath)) {
+      [System.IO.File]::AppendAllText(
+        $script:TextLogPath,
+        ($Message + "`r`n"),
+        (New-Object System.Text.UTF8Encoding($false))
+      )
+    }
+  } catch {
+    # never fail the run due to logging
+  }
+}
 
 function Write-Info([string]$Message) {
+  Append-TextLogLine $Message
   if (-not $JsonOnly) { Write-Host $Message }
 }
 
 $script:TryRunLastErrorText = ''
-
 
 function Assert-Command([string]$Name) {
   if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
@@ -49,7 +71,10 @@ function Try-RunLines([scriptblock]$Sb) {
   # Always returns string[]
   try {
     $script:TryRunLastErrorText = ''
-    # Capture stderr to keep Actions logs clean; keep for diagnosis.
+    # Avoid stale values if the scriptblock does not invoke an external process
+    $global:LASTEXITCODE = 0
+
+    # Capture stderr together; keep for diagnosis.
     $out = & $Sb 2>&1
     if ($LASTEXITCODE -ne 0) {
       $script:TryRunLastErrorText = (@($out) -join "`n").Trim()
@@ -69,46 +94,66 @@ function Is-Integration403([string]$Text) {
   return ($Text -match 'HTTP 403') -and ($Text -match 'Resource not accessible by integration')
 }
 
+function Resolve-LogDir() {
+  # Per user request: prefer the script directory (same folder as this .ps1).
+  $candidates = New-Object System.Collections.Generic.List[string]
 
-function Get-LogDir() {
-  # script path: ops/scripts; log dir: ops/logs
-  $opsDir = Split-Path -Parent $PSScriptRoot
-  $logDir = Join-Path $opsDir 'logs'
-  if (-not (Test-Path -LiteralPath $logDir)) {
-    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+  try {
+    if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+      $candidates.Add($PSScriptRoot)
+    }
+  } catch { }
+
+  try { $candidates.Add((Get-Location).Path) } catch { }
+
+  if (-not [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) { $candidates.Add($env:RUNNER_TEMP) }
+  if (-not [string]::IsNullOrWhiteSpace($env:TEMP)) { $candidates.Add($env:TEMP) }
+
+  foreach ($dir in $candidates) {
+    try {
+      # sanity: verify we can write
+      $probe = Join-Path $dir (".probe-{0}.tmp" -f ([Guid]::NewGuid().ToString('n')))
+      [System.IO.File]::WriteAllText($probe, "ok", (New-Object System.Text.UTF8Encoding($false)))
+      Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+      return $dir
+    } catch {
+      continue
+    }
   }
-  return $logDir
+
+  # absolute last resort
+  return '.'
 }
 
 function Write-JsonLog([object]$Obj, [string]$LogDir) {
-  $ts = Get-Date -Format 'yyyyMMdd_HHmmss'
-  $logPath = Join-Path $LogDir ("ai-prereqs-{0}.json" -f $ts)
-  $json = $Obj | ConvertTo-Json -Depth 20
+  $ts = $script:RunId
+  if ([string]::IsNullOrWhiteSpace($ts)) { $ts = Get-Date -Format 'yyyyMMdd_HHmmss_fff' }
+  $logPath = Join-Path $LogDir ("ai-prereqs-{0}-{1}.json" -f $ts, $PID)
+  $json = $Obj | ConvertTo-Json -Depth 30
   # UTF8 without BOM
   [System.IO.File]::WriteAllText($logPath, $json, (New-Object System.Text.UTF8Encoding($false)))
   return $logPath
 }
 
-function Set-Fail([hashtable]$Result, [string]$Summary) {
-  $Result.status = 'fail'
-  if ([string]::IsNullOrWhiteSpace($Result.summary)) {
-    $Result.summary = $Summary
+function Set-Fail([System.Collections.IDictionary]$Result, [string]$Summary) {
+  $Result['status'] = 'fail'
+  Append-TextLogLine ('FAIL: ' + $Summary)
+  if ([string]::IsNullOrWhiteSpace([string]$Result['summary'])) {
+    $Result['summary'] = $Summary
   } else {
-    $Result.summary = ($Result.summary + ' | ' + $Summary)
+    $Result['summary'] = ([string]$Result['summary'] + ' | ' + $Summary)
   }
 }
 
-Assert-Command git
-Assert-Command gh
-
-$logDir = Get-LogDir
-
-# --- initialize result ---
+# --- initialize result as early as possible ---
 $result = [ordered]@{
   ts = (Get-Date).ToString('o')
   repo = $Repo
   status = 'pass'
   summary = ''
+  outputs = [ordered]@{
+    textLogPath = ''
+  }
   checks = [ordered]@{
     labels = [ordered]@{
       required = @(
@@ -143,21 +188,59 @@ $result = [ordered]@{
 }
 
 $exitCode = 0
+$logDir = Resolve-LogDir
+
+# Create a plain text log in the same directory as the JSON (prefer script dir)
+try {
+  $script:TextLogPath = Join-Path $logDir ("check-ai-prereqs-{0}-{1}.log" -f $script:RunId, $PID)
+  # Touch + header
+  [System.IO.File]::WriteAllText($script:TextLogPath, ("startedAt=" + (Get-Date).ToString('o') + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+  $result.outputs.textLogPath = $script:TextLogPath
+} catch {
+  $script:TextLogPath = ''
+}
+
 
 try {
+  # --- preflight (do not terminate before logging) ---
+  if ($PSVersionTable.PSVersion.Major -lt 7) {
+    Set-Fail -Result $result -Summary ("powershell: requires 7+ (found {0})" -f $PSVersionTable.PSVersion.ToString())
+    $exitCode = 1
+  }
+
+  if ([string]::IsNullOrWhiteSpace($Repo)) {
+    Set-Fail -Result $result -Summary 'repo: missing -Repo owner/repo'
+    $exitCode = 1
+  } else {
+    $result.repo = $Repo
+  }
+
+  try {
+    Assert-Command git
+    Assert-Command gh
+  } catch {
+    Set-Fail -Result $result -Summary ("tools: {0}" -f $_.Exception.Message)
+    $exitCode = 1
+  }
+
+  if ($exitCode -ne 0) {
+    # Preflight failed; skip further checks but still log.
+    throw "preflight failed"
+  }
+
   # --- labels ---
   Write-Info "Checking labels..."
   $labelNames = Try-RunLines { gh label list --repo $Repo --limit 500 --json name --jq '.[].name' }
   $labelNames = @($labelNames | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 
   if ($labelNames.Count -eq 0) {
+    $result.checks.labels.note = $script:TryRunLastErrorText
     Set-Fail -Result $result -Summary 'labels: unable to list labels (auth/permissions or repo not found)'
-    $result.checks.labels.note = 'gh label list returned empty.'
     $exitCode = 1
   } else {
     $result.checks.labels.present = $labelNames
-    $req = @($result.checks.labels.required)
     $missing = @()
+    $req = @($result.checks.labels.required)
     foreach ($r in $req) {
       if (-not ($labelNames -contains $r)) { $missing += $r }
     }
@@ -168,6 +251,18 @@ try {
     }
   }
 
+  # --- default branch ---
+  Write-Info "Detecting default branch..."
+  $defaultBranchLines = Try-RunLines { gh api "repos/$Repo" --jq '.default_branch' }
+  $defaultBranchLines = @($defaultBranchLines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  if ($defaultBranchLines.Count -gt 0) {
+    $result.checks.branch_protection.branch = ($defaultBranchLines[0]).Trim()
+  } else {
+    if (-not [string]::IsNullOrWhiteSpace($script:TryRunLastErrorText)) {
+      $result.checks.branch_protection.note = ("default_branch lookup failed: {0}" -f $script:TryRunLastErrorText)
+    }
+  }
+
   # --- secrets (names only) ---
   Write-Info "Checking secrets..."
   $secretNames = Try-RunLines { gh secret list --repo $Repo --json name --jq '.[].name' }
@@ -175,24 +270,14 @@ try {
 
   if ($secretNames.Count -eq 0) {
     $apiFailed = -not [string]::IsNullOrWhiteSpace($script:TryRunLastErrorText)
+
+    # In GitHub Actions, GITHUB_TOKEN often can't list secrets: treat as SKIP (note only).
     if (Is-Integration403 $script:TryRunLastErrorText -or (($env:GITHUB_ACTIONS -eq 'true') -and $apiFailed)) {
-      Write-Warning "SKIP: unable to list secrets in GitHub Actions (insufficient token permission)."
-      $result.checks.secrets.note = 'SKIP: unable to list secrets in GitHub Actions (insufficient token permission).'
+      Write-Warning "SKIP: unable to list secrets (insufficient token permission)."
+      $result.checks.secrets.note = 'SKIP: unable to list secrets (insufficient token permission).'
     } else {
-      # do not hard-fail just because list is not permitted; record note, and use env hint
+      # outside Actions: record note and use env hint; if neither env exists, fail.
       $result.checks.secrets.note = 'unable to list secrets via gh (token permissions). Ensure at least one of ZAI_API_KEY or ZHIPU_API_KEY exists.'
-      # If neither env exists during the run, fail.
-      $hasEnv = (-not [string]::IsNullOrWhiteSpace($env:ZAI_API_KEY)) -or (-not [string]::IsNullOrWhiteSpace($env:ZHIPU_API_KEY))
-      if (-not $hasEnv) {
-        Set-Fail -Result $result -Summary 'secrets: cannot verify via API and no env key present in this run'
-        $result.checks.secrets.missing = @($result.checks.secrets.required_any)
-        $exitCode = 1
-      }
-    }
-  } else {
-      # do not hard-fail just because list is not permitted; record note, and use env hint
-      $result.checks.secrets.note = 'unable to list secrets via gh (token permissions). Ensure at least one of ZAI_API_KEY or ZHIPU_API_KEY exists.'
-      # If neither env exists during the run, fail.
       $hasEnv = (-not [string]::IsNullOrWhiteSpace($env:ZAI_API_KEY)) -or (-not [string]::IsNullOrWhiteSpace($env:ZHIPU_API_KEY))
       if (-not $hasEnv) {
         Set-Fail -Result $result -Summary 'secrets: cannot verify via API and no env key present in this run'
@@ -219,8 +304,17 @@ try {
   $varNames = @($varNames | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 
   if ($varNames.Count -eq 0) {
-    $result.checks.variables.note = 'unable to list variables via gh api (token permissions).'
-    # If we cannot list, do not hard-fail (avoid false negatives), but record it.
+    $apiFailed = -not [string]::IsNullOrWhiteSpace($script:TryRunLastErrorText)
+    if ($apiFailed) {
+      $result.checks.variables.note = 'unable to list variables via gh api (token permissions).'
+      # do not hard-fail on inability to list
+    } else {
+      # listing succeeded but there are no variables: treat required vars as missing
+      $missingVars = @($result.checks.variables.required)
+      $result.checks.variables.missing = $missingVars
+      Set-Fail -Result $result -Summary ("variables missing: {0}" -f ($missingVars -join ','))
+      $exitCode = 1
+    }
   } else {
     $result.checks.variables.present = $varNames
     $missingVars = @()
@@ -234,41 +328,50 @@ try {
     }
   }
 
-  # --- branch protection (main) ---
-  Write-Info "Checking branch protection (main)..."
-  $contexts = Try-RunLines { gh api "repos/$Repo/branches/main/protection" --jq '.required_status_checks.contexts[]?' }
+  # --- branch protection (default branch) ---
+  $branch = $result.checks.branch_protection.branch
+  Write-Info ("Checking branch protection ({0})..." -f $branch)
+  $contexts = Try-RunLines { gh api ("repos/{0}/branches/{1}/protection" -f $Repo, $branch) --jq '.required_status_checks.contexts[]?' }
+  $contexts = @($contexts | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
   if ($contexts.Count -gt 0) {
     $result.checks.branch_protection.enabled = $true
   } else {
     $apiFailed = -not [string]::IsNullOrWhiteSpace($script:TryRunLastErrorText)
-
-    if (($env:GITHUB_ACTIONS -eq 'true') -and $apiFailed) {
-      # GitHub Actions integration token often cannot read branch protection. Do not block call; enforce via repo settings.
-      Write-Warning "SKIP: cannot verify branch protection in GitHub Actions (insufficient token permission)."
-      $result.checks.branch_protection.enabled = $false
-      $result.checks.branch_protection.note = 'SKIP: cannot verify branch protection in GitHub Actions (insufficient token permission).'
-    } elseif (Is-Integration403 $script:TryRunLastErrorText) {
-      Write-Warning "SKIP: cannot read branch protection in GitHub Actions (HTTP 403 integration token)."
-      $result.checks.branch_protection.enabled = $false
-      $result.checks.branch_protection.note = 'SKIP: cannot read branch protection in GitHub Actions (HTTP 403 integration token).'
+    if ($apiFailed -and (Is-Integration403 $script:TryRunLastErrorText)) {
+      # In Actions, protection might be readable, but if not, treat as note.
+      $result.checks.branch_protection.note = 'unable to read branch protection (insufficient token permission).'
     } else {
-      # API returns 404 when not protected (or contexts empty). Treat as fail because policy requires CI green gating.
+      # 404 when not protected, or empty contexts
       $result.checks.branch_protection.enabled = $false
-      Set-Fail -Result $result -Summary 'branch protection missing on main (required status checks not enforced)'
-      $result.checks.branch_protection.note = 'repos/.../branches/main/protection returned empty/404.'
+      Set-Fail -Result $result -Summary ("branch protection missing on {0} (required status checks not enforced)" -f $branch)
+      $result.checks.branch_protection.note = ("repos/.../branches/{0}/protection returned empty/404." -f $branch)
       $exitCode = 1
     }
   }
 
 } catch {
   # Catch-all: mark fail but still write log
-  Set-Fail -Result $result -Summary ("exception: {0}" -f $_.Exception.Message)
+  if ($_.Exception.Message -ne 'preflight failed') {
+    Set-Fail -Result $result -Summary ("exception: {0}" -f $_.Exception.Message)
+  }
   $exitCode = 1
 } finally {
-  $logPath = Write-JsonLog -Obj $result -LogDir $logDir
-  # Print log path for workflow step parsing, even in JsonOnly mode
-  Write-Output $logPath
+  $logPath = ''
+  try {
+    # Per user request: write alongside script first; fallback is handled by Resolve-LogDir.
+    if ([string]::IsNullOrWhiteSpace($logDir)) { $logDir = Resolve-LogDir }
+    $logPath = Write-JsonLog -Obj $result -LogDir $logDir
+  } catch {
+    # Last resort: emit JSON to stdout so CI has *something* actionable.
+    Write-Warning ("FAILED to write JSON log to disk: {0}" -f $_.Exception.Message)
+    Write-Output ($result | ConvertTo-Json -Depth 30)
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($logPath)) {
+    # Print log path for workflow step parsing, even in JsonOnly mode
+    Write-Output $logPath
+  }
 }
 
 exit $exitCode
-
