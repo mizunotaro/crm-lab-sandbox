@@ -6,9 +6,6 @@ on:
   workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
-    paths:
-      - '.github/workflows/**'
-      - 'ops/scripts/**'
 
 permissions:
   contents: read
