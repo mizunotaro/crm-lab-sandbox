@@ -1,0 +1,9 @@
+# GitHub Workflows
+.github/workflows/** @mizunotaro
+
+# Ops directory (scripts, issues)
+ops/** @mizunotaro
+
+# CI configuration
+.github/dependabot.yml @mizunotaro
+CODEOWNERS @mizunotaro
