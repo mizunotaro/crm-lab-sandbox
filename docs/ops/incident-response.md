@@ -11,6 +11,7 @@
 ### 0.1 Activate PAUSE
 - [ ] Stop all non-critical deployments
 - [ ] Suspend automated processes touching affected systems
+  - Set `AI_AUTOMATION_MODE=PAUSE` (see `docs/ops/ai-automation-control.md`)
 - [ ] Notify incident response team (IRT)
 - [ ] Create incident ticket with severity level
 
@@ -191,5 +192,9 @@ Get-NetTCPConnection | Select-Object LocalAddress, RemoteAddress, State | Export
 ```
 
 ---
+
+**Related Procedures:**
+- **AI Automation Control:** See `docs/ops/ai-automation-control.md` for setting AI_AUTOMATION_MODE
+- **Helper Script:** See `ops/scripts/set-ai-automation-mode.ps1` for automated mode setting
 
 **Reference:** See `AGENTS.md` §0.5 for security policies and §5.3 for dependency management.
