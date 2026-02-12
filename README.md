@@ -72,3 +72,6 @@ See `AGENTS.md` for project operating rules and agent guidelines.
 
 TBD
 >>>>>>> origin/main
+
+<!-- smoke: required checks -->
+
