@@ -132,17 +132,22 @@ describe('API Contract Tests - Contact Management', () => {
 
   describe('updateContact Endpoint', () => {
     it('should return updated contact with changed fields', async () => {
+      const { vi } = await import('vitest');
+      
       const created = await contactApi.createContact({
         name: 'Test User',
         email: 'test@example.com',
       });
       
-      await new Promise(resolve => setTimeout(resolve, 1));
+      vi.useFakeTimers();
+      vi.advanceTimersByTime(1);
       
       const result = await contactApi.updateContact(created.data.id, {
         name: 'Updated User',
         phone: '+9876543210',
       });
+      
+      vi.useRealTimers();
       
       if (result.success) {
         expect(result.data).toMatchObject({
