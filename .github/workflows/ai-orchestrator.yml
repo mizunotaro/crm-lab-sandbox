@@ -16,7 +16,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check_pause:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check AI_AUTOMATION_MODE
+        id: check
+        run: |
+          MODE="${{ vars.AI_AUTOMATION_MODE }}"
+          if [ "$MODE" = "PAUSE" ]; then
+            echo "status=paused" >> $GITHUB_OUTPUT
+            echo "AI automation paused (AI_AUTOMATION_MODE=PAUSE)"
+            exit 1
+          else
+            echo "status=running" >> $GITHUB_OUTPUT
+            echo "AI automation running (AI_AUTOMATION_MODE=$MODE)"
+          fi
+
   preflight:
+    needs: check_pause
+    if: needs.check_pause.outputs.status == 'running'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -78,7 +96,8 @@ jobs:
           Get-Content -LiteralPath $p.FullName -Raw
 
   call:
-    needs: preflight
+    needs: [preflight, check_pause]
+    if: needs.check_pause.outputs.status == 'running'
     permissions:
       id-token: write
       contents: write
