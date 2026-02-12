@@ -16,6 +16,44 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check_pause:
+    runs-on: ubuntu-latest
+    outputs:
+      paused: ${{ steps.check_mode.outputs.paused }}
+      pause_reason: ${{ steps.check_mode.outputs.reason }}
+    steps:
+      - name: Check AI_AUTOMATION_MODE
+        id: check_mode
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mode="${{ vars.AI_AUTOMATION_MODE }}"
+          echo "AI_AUTOMATION_MODE=${mode:-not set}"
+          
+          if [ "$mode" = "PAUSE" ]; then
+            echo "paused=true" >> $GITHUB_OUTPUT
+            echo "reason=AI_AUTOMATION_MODE=PAUSE" >> $GITHUB_OUTPUT
+            echo "::warning::AI automation paused (AI_AUTOMATION_MODE=PAUSE)"
+            exit 0
+          fi
+
+          # Check if issue #397 (AI Watchdog pause recommendation) is open
+          issue_state=$(gh issue view 397 --repo "${{ github.repository }}" --json state --jq '.state' 2>/dev/null || echo "not_found")
+          if [ "$issue_state" = "OPEN" ]; then
+            has_pause_label=$(gh issue view 397 --repo "${{ github.repository }}" --json labels --jq '.labels[].name' | grep -c "ai:pause" || true)
+            if [ "$has_pause_label" -gt 0 ]; then
+              echo "paused=true" >> $GITHUB_OUTPUT
+              echo "reason=Issue #397 with ai:pause label" >> $GITHUB_OUTPUT
+              echo "::warning::AI automation paused (Issue #397 with ai:pause label)"
+              exit 0
+            fi
+          fi
+          
+          echo "paused=false" >> $GITHUB_OUTPUT
+          echo "AI automation will proceed"
+
   preflight:
     runs-on: ubuntu-latest
     steps:
@@ -78,7 +116,8 @@ jobs:
           Get-Content -LiteralPath $p.FullName -Raw
 
   call:
-    needs: preflight
+    needs: [check_pause, preflight]
+    if: needs.check_pause.outputs.paused == 'false'
     permissions:
       id-token: write
       contents: write
