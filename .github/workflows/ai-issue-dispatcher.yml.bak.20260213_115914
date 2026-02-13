@@ -1,0 +1,24 @@
+name: AI Issue Dispatcher (ai:ready)
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+concurrency:
+  group: ai-issue-dispatcher-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    if: ${{ github.event.label.name == 'ai:ready' }}
+    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-orchestrator.yml@bcfd8e53eadd739fc255847d007f83e7b6ac8565
+    with:
+      model: 'zai/glm-4.7'
+    secrets:
+      ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
