@@ -1,0 +1,31 @@
+name: Required Checks Guard
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - ".github/scripts/required-checks-guard.ps1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run guard
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File ./.github/scripts/required-checks-guard.ps1 -Branch main
+
+      - name: Upload report (best-effort)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: required-checks-guard-report
+          path: ./.github/scripts/_reports
+          if-no-files-found: ignore

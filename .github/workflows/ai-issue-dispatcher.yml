@@ -9,6 +9,7 @@ permissions:
   pull-requests: write
   issues: write
   id-token: write
+  actions: read
 
 concurrency:
   group: ai-issue-dispatcher-${{ github.repository }}
@@ -17,8 +18,19 @@ concurrency:
 jobs:
   dispatch:
     if: ${{ github.event.label.name == 'ai:ready' }}
-    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-orchestrator.yml@bcfd8e53eadd739fc255847d007f83e7b6ac8565
+    uses: mizunotaro/ai-playbook/.github/workflows/reuse-ai-orchestrator.yml@main
     with:
-      model: 'zai/glm-4.7'
-    secrets:
-      ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+      # SSOT-aligned (Issue3 probe)
+      model: "zai-coding-plan/glm-4.7"
+      enable_fallback: true
+      model_fallback: "zai-coding-plan/glm-4.6"
+
+      # OpenCode CLI version (probe)
+      opencode_version: "1.1.53"
+      opencode_version_fallback: "1.1.44"
+
+      # caller policy
+      job_timeout_minutes: 45
+      opencode_step_timeout_minutes: 20
+
+    secrets: inherit
