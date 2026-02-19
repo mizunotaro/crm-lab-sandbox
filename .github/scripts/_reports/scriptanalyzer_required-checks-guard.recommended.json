@@ -1,0 +1,74 @@
+[
+  {
+    "Message": "The Variable 'args' is an automatic variable that is built into PowerShell, assigning to it might have undesired side effects. If assignment is not by design, please use a different name.",
+    "Extent": {
+      "File": "C:\\src\\_sandbox\\crm-lab-sandbox\\.github\\scripts\\required-checks-guard.recommended.ps1",
+      "StartScriptPosition": {
+        "File": "C:\\src\\_sandbox\\crm-lab-sandbox\\.github\\scripts\\required-checks-guard.recommended.ps1",
+        "LineNumber": 251,
+        "ColumnNumber": 7,
+        "Line": "      $args = @(\n",
+        "Offset": 7893
+      },
+      "EndScriptPosition": {
+        "File": "C:\\src\\_sandbox\\crm-lab-sandbox\\.github\\scripts\\required-checks-guard.recommended.ps1",
+        "LineNumber": 251,
+        "ColumnNumber": 12,
+        "Line": "      $args = @(\n",
+        "Offset": 7898
+      },
+      "StartLineNumber": 251,
+      "StartColumnNumber": 7,
+      "EndLineNumber": 251,
+      "EndColumnNumber": 12,
+      "Text": "$args",
+      "StartOffset": 7893,
+      "EndOffset": 7898
+    },
+    "RuleName": "PSAvoidAssignmentToAutomaticVariable",
+    "Severity": 1,
+    "ScriptName": "required-checks-guard.recommended.ps1",
+    "ScriptPath": "C:\\src\\_sandbox\\crm-lab-sandbox\\.github\\scripts\\required-checks-guard.recommended.ps1",
+    "RuleSuppressionID": "args",
+    "SuggestedCorrections": null,
+    "IsSuppressed": false,
+    "Line": 251,
+    "Column": 7
+  },
+  {
+    "Message": "The parameter 'WorkflowMeta' has been declared but not used.",
+    "Extent": {
+      "File": "C:\\src\\_sandbox\\crm-lab-sandbox\\.github\\scripts\\required-checks-guard.recommended.ps1",
+      "StartScriptPosition": {
+        "File": "C:\\src\\_sandbox\\crm-lab-sandbox\\.github\\scripts\\required-checks-guard.recommended.ps1",
+        "LineNumber": 560,
+        "ColumnNumber": 43,
+        "Line": "    [Parameter(Mandatory)][pscustomobject]$WorkflowMeta\n",
+        "Offset": 20057
+      },
+      "EndScriptPosition": {
+        "File": "C:\\src\\_sandbox\\crm-lab-sandbox\\.github\\scripts\\required-checks-guard.recommended.ps1",
+        "LineNumber": 560,
+        "ColumnNumber": 56,
+        "Line": "    [Parameter(Mandatory)][pscustomobject]$WorkflowMeta\n",
+        "Offset": 20070
+      },
+      "StartLineNumber": 560,
+      "StartColumnNumber": 43,
+      "EndLineNumber": 560,
+      "EndColumnNumber": 56,
+      "Text": "$WorkflowMeta",
+      "StartOffset": 20057,
+      "EndOffset": 20070
+    },
+    "RuleName": "PSReviewUnusedParameter",
+    "Severity": 1,
+    "ScriptName": "required-checks-guard.recommended.ps1",
+    "ScriptPath": "C:\\src\\_sandbox\\crm-lab-sandbox\\.github\\scripts\\required-checks-guard.recommended.ps1",
+    "RuleSuppressionID": "WorkflowMeta",
+    "SuggestedCorrections": null,
+    "IsSuppressed": false,
+    "Line": 560,
+    "Column": 43
+  }
+]
