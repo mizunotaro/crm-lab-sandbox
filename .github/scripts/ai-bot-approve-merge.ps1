@@ -16,7 +16,7 @@ param(
   [int]$SleepSeconds = 30,
 
   [Parameter(Mandatory=$false)]
-  [string]$BotUser = 'mizunotarobot'
+  [string]$BotUser = 'mizunotarowork'
 )
 
 Set-StrictMode -Version Latest
@@ -103,8 +103,15 @@ function All-RequiredChecksSuccess($rollupList, [string[]]$required) {
 }
 
 function Comment-And-Block([string]$repo, [int]$pr, [string]$msg) {
-  Try-Invoke { & gh pr comment "$pr" -R "$repo" -b "$msg" | Out-Null } 'pr comment' | Out-Null
-  Try-Invoke { & gh pr edit "$pr" -R "$repo" --add-label "ai:blocked" | Out-Null } 'add label ai:blocked' | Out-Null
+  Try-Invoke {
+    $null = & gh pr comment "$pr" -R "$repo" -b "$msg" 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "gh pr comment failed (exit=$LASTEXITCODE)" }
+  } 'pr comment' | Out-Null
+
+  Try-Invoke {
+    $null = & gh pr edit "$pr" -R "$repo" --add-label "ai:blocked" 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "gh pr edit --add-label failed (exit=$LASTEXITCODE)" }
+  } 'add label ai:blocked' | Out-Null
 }
 
 try {
@@ -115,6 +122,19 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'gh is not available' }
 
   $pr0 = Get-StatusRollup $Repo $PullNumber
+  
+  $viewer = (Invoke-Json @('api','user')).login
+  if ([string]::IsNullOrWhiteSpace($BotUser)) { $BotUser = $viewer }
+
+  $authorLogin = $pr0.author.login
+
+  if ($viewer -eq $authorLogin) {
+    $m = "Fail-fast: token login '$viewer' is the PR author '$authorLogin'. A user cannot approve their own PR. Use a separate bot account token. run_id=$RunId"
+    Write-Log 'ERROR' $m
+    Comment-And-Block $Repo $PullNumber $m
+    exit 1
+  }
+  
   if ($pr0.isDraft -eq $true) {
     Write-Log 'INFO' 'PR is draft. Exiting without action.'
     exit 0
@@ -133,6 +153,9 @@ try {
   Write-Log 'INFO' ("Required checks ({0}): {1}" -f (@($required).Count), ($required -join ', '))
 
   $attempt = 0
+
+  $didApprove = $false
+  
   while ($attempt -lt $MaxAttempts) {
     $attempt++
     $st = Get-StatusRollup $Repo $PullNumber
@@ -143,27 +166,31 @@ try {
 
     Write-Log 'INFO' ("Attempt {0}/{1}: mergeState={2} reviewDecision={3} checksOK={4}" -f $attempt, $MaxAttempts, $mergeState, $reviewDecision, $okChecks)
 
-    if ($okChecks -and $mergeState -ne 'BLOCKED') {
-      Try-Invoke {
-        & gh pr review "$PullNumber" -R "$Repo" --approve --body ("Approved by {0}. run_id={1}" -f $BotUser, $RunId) | Out-Null
-      } 'approve' | Out-Null
-
-      $merged = $false
-      foreach ($strategy in @('squash','merge','rebase')) {
-        if ($merged) { break }
-        $label = "merge --auto --$strategy"
-        $merged = Try-Invoke {
-          $args = @('pr','merge',"$PullNumber",'-R',"$Repo",'--auto',("--" + $strategy),'--delete-branch')
-          & gh @args | Out-Null
-        } $label
+    # 1) レビュー必須なら、BLOCKEDでも一度だけapproveを試す
+    if (-not $didApprove -and $reviewDecision -eq 'REVIEW_REQUIRED') {
+      Write-Log 'INFO' 'Review required -> attempting bot approval...'
+	        $out = & gh pr review "$PullNumber" -R "$Repo" --approve --body ("Approved by {0}. run_id={1}" -f $BotUser, $RunId) 2>&1
+      if ($LASTEXITCODE -ne 0) {
+        throw ("approve failed (exit={0}): {1}" -f $LASTEXITCODE, (($out | Out-String).Trim()))
       }
+      $didApprove = $true
+    }
 
-      if ($merged) {
-        Write-Log 'INFO' 'Auto-merge enabled (or merge queued). Done.'
-        exit 0
-      }
+    # 2) auto-merge は「すぐにマージできないPR」で有効化するのが前提（BLOCKEDでもOK）
+    $merged = $false
+    foreach ($strategy in @('squash','merge','rebase')) {
+      if ($merged) { break }
+      $label = "merge --auto --$strategy"
+      $merged = Try-Invoke {
+        $args = @('pr','merge',"$PullNumber",'-R',"$Repo",'--auto',("--" + $strategy),'--delete-branch')
+        $null = & gh @args 2>&1
+		if ($LASTEXITCODE -ne 0) { throw "gh pr merge failed (exit=$LASTEXITCODE)" }
+      } $label
+    }
 
-      Write-Log 'WARN' 'Could not enable auto-merge yet. Will retry.'
+    if ($merged) {
+      Write-Log 'INFO' 'Auto-merge enabled (or merge queued). Done.'
+      exit 0
     }
 
     Start-Sleep -Seconds $SleepSeconds
