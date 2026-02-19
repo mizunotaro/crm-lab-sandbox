@@ -42,7 +42,20 @@ function Invoke-Json([string[]]$args) {
     throw ("gh failed (exit={0}): gh {1}`n{2}" -f $code, ($args -join ' '), $msg)
   }
   $txt = ($raw | Out-String)
-  return ($txt | ConvertFrom-Json)
+  $txtStr = if ($txt -is [string]) { $txt } else { ($txt | Out-String) }
+$trim = $txtStr.Trim()
+if ($trim.Length -eq 0) { throw "Expected JSON but got empty output." }
+
+$trim2 = $trim.TrimStart()
+if ($trim2.Length -eq 0) { throw "Expected JSON but got whitespace-only output." }
+
+$first = $trim2[0]
+if ($first -ne '{' -and $first -ne '[') {
+  $snippet = $trim2.Substring(0, [Math]::Min(300, $trim2.Length))
+  throw "Expected JSON but got non-JSON output (first 300 chars): $snippet"
+}
+
+return ($trim | ConvertFrom-Json -Depth 100)
 }
 
 function Try-Invoke([scriptblock]$Block, [string]$Label) {
