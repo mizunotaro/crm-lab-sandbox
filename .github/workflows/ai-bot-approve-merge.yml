@@ -29,10 +29,10 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Approve & enable auto-merge (mizunotarobot)
+      - name: Approve & enable auto-merge (mizunotarowork)
         shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.MIZUNOTAROBOT_TOKEN }}
+          GH_TOKEN: ${{ secrets.MIZUNOTAROWORK_TOKEN }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           RUN_ID: ${{ github.run_id }}
