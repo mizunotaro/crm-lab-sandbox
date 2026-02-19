@@ -86,7 +86,7 @@ function Get-StatusRollup([string]$repo, [int]$pr) {
 }
 
 function All-RequiredChecksSuccess($rollupList, [string[]]$required) {
-  if (-not $required -or $required.Count -eq 0) { return $true }
+  if (-not $required -or (@($required).Count) -eq 0) { return $true }
 
   $index = @{}
   foreach ($item in $rollupList) {
@@ -130,7 +130,7 @@ try {
 
   $baseBranch = (Invoke-Json @('pr','view',"$PullNumber",'-R',"$Repo",'--json','baseRefName')).baseRefName
   $required = Get-RequiredChecks $Repo $baseBranch
-  Write-Log 'INFO' ("Required checks ({0}): {1}" -f $required.Count, ($required -join ', '))
+  Write-Log 'INFO' ("Required checks ({0}): {1}" -f (@($required).Count), ($required -join ', '))
 
   $attempt = 0
   while ($attempt -lt $MaxAttempts) {
@@ -154,7 +154,7 @@ try {
         $label = "merge --auto --$strategy"
         $merged = Try-Invoke {
           $args = @('pr','merge',"$PullNumber",'-R',"$Repo",'--auto',("--" + $strategy),'--delete-branch')
-          & gh @GhArgs | Out-Null
+          & gh @args | Out-Null
         } $label
       }
 
