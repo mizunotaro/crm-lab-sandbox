@@ -34,12 +34,13 @@ function Assert-Env([string]$name) {
   }
 }
 
-function Invoke-Json([string[]]$args) {
-  $raw = & gh @args 2>&1
+function Invoke-Json([string[]]$GhArgs) {
+  if (-not $GhArgs -or $GhArgs.Count -eq 0) { throw "Invoke-Json called with no gh args." }
+  $raw = & gh @GhArgs 2>&1
   $code = $LASTEXITCODE
   if ($code -ne 0) {
     $msg = ($raw | Out-String).Trim()
-    throw ("gh failed (exit={0}): gh {1}`n{2}" -f $code, ($args -join ' '), $msg)
+    throw ("gh failed (exit={0}): gh {1}`n{2}" -f $code, ($GhArgs -join ' '), $msg)
   }
   $txt = ($raw | Out-String)
   $txtStr = if ($txt -is [string]) { $txt } else { ($txt | Out-String) }
@@ -153,7 +154,7 @@ try {
         $label = "merge --auto --$strategy"
         $merged = Try-Invoke {
           $args = @('pr','merge',"$PullNumber",'-R',"$Repo",'--auto',("--" + $strategy),'--delete-branch')
-          & gh @args | Out-Null
+          & gh @GhArgs | Out-Null
         } $label
       }
 
