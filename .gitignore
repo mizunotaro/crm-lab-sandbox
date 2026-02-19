@@ -9,8 +9,8 @@ expo/
 .env.*
 # docs/ is mostly ignored, but specific subdirectories are tracked below
 #docs/
-docs/ops/
-docs/ai/
+# docs/ops/ - Track these files for operations documentation
+# docs/ai/ - Track these files for AI session logs and decisions
 ops/logs/
 _probe/
 *.bak_*
