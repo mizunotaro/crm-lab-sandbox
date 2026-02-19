@@ -28,7 +28,10 @@ function Write-Log([string]$Level, [string]$Message) {
 }
 
 function Assert-Env([string]$name) {
-  if (-not $env:$name) { throw "Required env var missing: $name" }
+    $item = Get-Item -Path "Env:$name" -ErrorAction SilentlyContinue
+  if (-not $item -or [string]::IsNullOrEmpty($item.Value)) {
+    throw "Required env var missing: $name"
+  }
 }
 
 function Invoke-Json([string[]]$args) {
