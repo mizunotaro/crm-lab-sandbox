@@ -23,19 +23,28 @@ concurrency:
   group: ai-triage-${{ github.repository }}
   cancel-in-progress: false
 
-jobs:
+  jobs:
   preflight:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup PowerShell
-        uses: microsoft/setup-powershell@v1
+      - name: Verify pwsh is available (fail-fast)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v pwsh >/dev/null 2>&1; then
+            echo "ERROR: pwsh not found on runner. This workflow expects runner-provided PowerShell."
+            exit 1
+          fi
+          echo "OK: pwsh found at: $(command -v pwsh)"
+          pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
 
       - name: Run AI prerequisites check
+        shell: pwsh
         run: |
-          pwsh -NoProfile -ExecutionPolicy Bypass -File ./ops/scripts/check-ai-prereqs.ps1 -Repo ${{ github.repository }}
+          pwsh -NoProfile -ExecutionPolicy Bypass -File ./ops/scripts/check-ai-prereqs.ps1 -Repo "${{ github.repository }}"
         env:
           GH_TOKEN: ${{ github.token }}
 
