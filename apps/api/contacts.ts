@@ -71,13 +71,14 @@ export class ContactApi {
   }
 
   async createContact(request: CreateContactRequest): Promise<ApiResponse<Contact>> {
+    const now = new Date().toISOString();
     const contact: Contact = {
       id: crypto.randomUUID(),
       name: request.name,
       email: request.email,
       phone: request.phone,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
     };
     this.contacts.push(contact);
     return {
