@@ -121,6 +121,7 @@ function Read-Policy {
 }
 
 function Invoke-GhJson {
+<<<<<<< HEAD
   param([Parameter(Mandatory)][string[]]$GhArgs)
   $r = Invoke-Native -Exe 'gh' -ExeArgs $GhArgs
   if (-not $r.StdOut) { throw "Expected JSON but got empty output from gh." }
@@ -129,6 +130,17 @@ function Invoke-GhJson {
   } catch {
     throw "Failed to parse JSON output from gh. Output begins: $($r.StdOut.Substring(0, [Math]::Min(300, $r.StdOut.Length)))"
   }
+=======
+  param(
+    [Parameter(Mandatory, Position=0)]
+    [Alias('ExeArgs')] # 既存の誤呼び出しも救う
+    [string[]]$GhArgs
+  )
+
+  $r = Invoke-Native -Exe 'gh' -ExeArgs $GhArgs
+  if (-not $r.StdOut) { throw "Expected JSON but got empty output from gh." }
+  return ($r.StdOut | ConvertFrom-Json -Depth 100)
+>>>>>>> b9df368 (fix: accept -ExeArgs in Invoke-GhJson (compat))
 }
 
 function Try-Comment {
