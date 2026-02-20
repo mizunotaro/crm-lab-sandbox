@@ -1,0 +1,37 @@
+{
+  "labels": {
+    "gate_any_of": ["ai:in-progress", "ai:auto-fix"],
+    "blocked": "ai:blocked"
+  },
+  "attempts": {
+    "max_autofix_commits": 10,
+    "autofix_commit_prefix": "[autofix]"
+  },
+  "powershell": {
+    "enabled": true,
+    "extensions": [".ps1", ".psm1", ".psd1"],
+    "script_analyzer": {
+      "enabled": true,
+      "severity_fail": ["Error"],
+      "severity_report": ["Error", "Warning", "Information"]
+    }
+  },
+  "python": {
+    "enabled": true,
+    "extensions": [".py"],
+    "ruff": {
+      "check_args": ["check", "--select", "ALL", "--preview", "--statistics", "--output-format", "grouped"],
+      "fail_on_findings": true,
+      "autofix_args": ["check", "--select", "ALL", "--preview", "--fix"]
+    }
+  },
+  "autofix": {
+    "enabled": true,
+    "push_changes": true
+  },
+  "bot": {
+    "user": "mizunotarowork",
+    "email": "mizunotarowork@users.noreply.github.com",
+    "token_secret_name": "MIZUNOTAROWORK_TOKEN"
+  }
+}
