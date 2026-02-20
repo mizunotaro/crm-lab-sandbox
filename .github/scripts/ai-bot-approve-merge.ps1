@@ -310,7 +310,7 @@ for ($i = 1; $i -le $MaxAttempts; $i++) {
 
   $checksOK = Rollup-IsGreen -RollupState $rollupState
 
-  Write-Log INFO "Attempt $i/$MaxAttempts: mergeState=$mergeState reviewDecision=$reviewDecision rollupState=$rollupState checksOK=$checksOK draft=$isDraft author=$author actor=$actor"
+  Write-Log INFO ("Attempt {0}/{1}: mergeState={2} reviewDecision={3} rollupState={4} checksOK={5} draft={6} author={7} actor={8}" -f $i, $MaxAttempts, $mergeState, $reviewDecision, $rollupState, $checksOK, $isDraft, $author, $actor)
 
   if ($isDraft) {
     Add-LabelSafe -Name $BlockLabel
