@@ -1,0 +1,150 @@
+name: AI QC AutoFix
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "owner/repo (default: this repository)"
+        required: false
+        default: ""
+      pr_number:
+        description: "Pull Request number"
+        required: true
+        type: number
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  qc_autofix_pr:
+    name: QC + AutoFix (pull_request)
+    if: >
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (
+        contains(github.event.pull_request.labels.*.name, 'ai:in-progress') ||
+        contains(github.event.pull_request.labels.*.name, 'ai:auto-fix')
+      )
+    runs-on: windows-latest
+    timeout-minutes: 25
+    concurrency:
+      group: ai-qc-autofix-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+
+    env:
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      RUN_ID: ${{ github.run_id }}
+
+    steps:
+      - name: Checkout (PR head)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install uv (for uvx ruff)
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Read QC policy
+        id: policy
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $policyPath = ".github/ai/qc-policy.json"
+          if (-not (Test-Path -LiteralPath $policyPath)) { throw "QC policy not found: $policyPath" }
+          $policy = Get-Content -LiteralPath $policyPath -Raw -Encoding UTF8 | ConvertFrom-Json -Depth 50
+          "max_attempts=$($policy.attempts.max_autofix_commits)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "policy_path=$policyPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: QC + AutoFix
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.MIZUNOTAROWORK_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          POLICY_PATH: ${{ steps.policy.outputs.policy_path }}
+          MAX_ATTEMPTS: ${{ steps.policy.outputs.max_attempts }}
+        run: |
+          ./.github/scripts/ai-qc-autofix.ps1 `
+            -Repo $env:REPO `
+            -PullNumber ([int]$env:PR_NUMBER) `
+            -RunId $env:RUN_ID `
+            -MaxAttempts ([int]$env:MAX_ATTEMPTS) `
+            -PolicyPath $env:POLICY_PATH
+
+  qc_autofix_manual:
+    name: QC + AutoFix (workflow_dispatch)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 25
+    concurrency:
+      group: ai-qc-autofix-manual-${{ inputs.repo || github.repository }}-${{ inputs.pr_number }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Resolve PR context
+        id: pr
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $repo = ("${{ inputs.repo }}").Trim()
+          if (-not $repo) { $repo = "${{ github.repository }}" }
+          $pr = [int]"${{ inputs.pr_number }}"
+          $json = gh api "repos/$repo/pulls/$pr" --jq '{head_ref:.head.ref,head_repo:.head.repo.full_name,labels:[.labels[].name]}' 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "gh api failed: $($json | Out-String)" }
+          $ctx = $json | ConvertFrom-Json -Depth 10
+          "repo=$repo" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "pr=$pr" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "head_ref=$($ctx.head_ref)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "head_repo=$($ctx.head_repo)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Checkout (PR head)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.pr.outputs.head_repo }}
+          ref: ${{ steps.pr.outputs.head_ref }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install uv (for uvx ruff)
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Read QC policy
+        id: policy
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $policyPath = ".github/ai/qc-policy.json"
+          if (-not (Test-Path -LiteralPath $policyPath)) { throw "QC policy not found: $policyPath" }
+          $policy = Get-Content -LiteralPath $policyPath -Raw -Encoding UTF8 | ConvertFrom-Json -Depth 50
+          "max_attempts=$($policy.attempts.max_autofix_commits)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "policy_path=$policyPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: QC + AutoFix
+        shell: pwsh
+        env:
+          REPO: ${{ steps.pr.outputs.repo }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr }}
+          RUN_ID: ${{ github.run_id }}
+          GH_TOKEN: ${{ secrets.MIZUNOTAROWORK_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          POLICY_PATH: ${{ steps.policy.outputs.policy_path }}
+          MAX_ATTEMPTS: ${{ steps.policy.outputs.max_attempts }}
+        run: |
+          ./.github/scripts/ai-qc-autofix.ps1 `
+            -Repo $env:REPO `
+            -PullNumber ([int]$env:PR_NUMBER) `
+            -RunId $env:RUN_ID `
+            -MaxAttempts ([int]$env:MAX_ATTEMPTS) `
+            -PolicyPath $env:POLICY_PATH
