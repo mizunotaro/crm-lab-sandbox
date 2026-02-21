@@ -43,6 +43,19 @@ export function isApiError<T>(result: ApiResult<T>): result is ErrorResponse {
 export class ContactApi {
   private contacts: Contact[] = [];
 
+  /**
+   * Computes a monotonic updatedAt timestamp for a contact.
+   * Ensures updatedAt is strictly greater than the previous updatedAt (or createdAt).
+   */
+  private computeNextUpdatedAt(existing: Contact): string {
+    const nowMs = Date.now();
+    const prevIso = existing.updatedAt || existing.createdAt;
+    const prevMs = Date.parse(prevIso);
+    const safePrevMs = Number.isFinite(prevMs) ? prevMs : 0;
+    const nextMs = Math.max(nowMs, safePrevMs + 1);
+    return new Date(nextMs).toISOString();
+  }
+
   async listContacts(): Promise<ApiResponse<Contact[]>> {
     return {
       data: this.contacts,
@@ -71,13 +84,14 @@ export class ContactApi {
   }
 
   async createContact(request: CreateContactRequest): Promise<ApiResponse<Contact>> {
+    const nowIso = new Date().toISOString();
     const contact: Contact = {
       id: crypto.randomUUID(),
       name: request.name,
       email: request.email,
       phone: request.phone,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: nowIso,
+      updatedAt: nowIso,
     };
     this.contacts.push(contact);
     return {
@@ -99,10 +113,11 @@ export class ContactApi {
         timestamp: new Date().toISOString(),
       };
     }
+    const existing = this.contacts[index];
     this.contacts[index] = {
-      ...this.contacts[index],
+      ...existing,
       ...request,
-      updatedAt: new Date().toISOString(),
+      updatedAt: this.computeNextUpdatedAt(existing),
     };
     return {
       data: this.contacts[index],

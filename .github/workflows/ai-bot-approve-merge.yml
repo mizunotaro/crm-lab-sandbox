@@ -23,15 +23,24 @@ jobs:
       (contains(github.event.pull_request.labels.*.name, 'ai:in-progress') || contains(github.event.pull_request.labels.*.name, 'ai:auto-merge'))
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ secrets.MIZUNOTAROWORK_TOKEN }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          token: ${{ secrets.MIZUNOTAROWORK_TOKEN }}
+
+      - name: Probe token subject
+        shell: pwsh
+        run: |
+          gh api user --jq ".login"
+
       - name: Approve & enable auto-merge (mizunotarowork)
         shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.MIZUNOTAROWORK_TOKEN }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           RUN_ID: ${{ github.run_id }}
