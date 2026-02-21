@@ -4,45 +4,17 @@
   Approve a PR (if required) and enable GitHub Auto-merge, using GitHub CLI (gh).
 
 .DESCRIPTION
-  - Designed for GitHub Actions (PowerShell 7) on Windows/Linux runners.
+  Hardened for GitHub Actions:
   - Uses GH_TOKEN (recommended: bot classic PAT) for authentication.
-  - Tries to resolve REVIEW_REQUIRED by approving (when possible).
-  - Determines check health using `gh pr view --json statusCheckRollup` (does NOT rely on branch protection endpoints).
-  - If it cannot satisfy branch protection (e.g., CODEOWNERS required, self-approval, insufficient permissions),
-    it falls back to labeling the PR as ai:blocked and adding a comment with next actions.
+  - Logs token subject via `gh api user --jq .login` (no secrets).
+  - Attempts to resolve REVIEW_REQUIRED by approving (when possible), BEFORE waiting for checks.
+  - Tries to enable auto-merge (`gh pr merge --auto`) even when checks are pending/unknown.
+  - Never fails the workflow for "not ready yet" conditions. If requirements aren't met after retries,
+    it leaves a comment + label and exits 0 (so it does NOT become an additional failing check).
+  - Still throws on unexpected script/runtime failures (to surface real bugs).
 
-.PARAMETER Repo
-  Repository in "owner/name" format.
-
-.PARAMETER PullNumber
-  Pull Request number.
-
-.PARAMETER RunId
-  Optional Actions run id (for traceability in comments/logs).
-
-.PARAMETER MaxAttempts
-  Retry attempts for polling merge/review/check states.
-
-.PARAMETER SleepSeconds
-  Sleep between attempts.
-
-.PARAMETER MergeMethod
-  merge method: squash|merge|rebase
-
-.PARAMETER DeleteBranch
-  If set, request deletion of the head branch when auto-merge completes.
-
-.PARAMETER EnableAutoMerge
-  If set (default), enable auto-merge when the PR is mergeable & approved & checks are green.
-
-.PARAMETER TryAutoApprove
-  If set (default), attempt to approve when reviewDecision=REVIEW_REQUIRED.
-
-.PARAMETER BlockLabel
-  Label to add when automation cannot proceed safely.
-
-.PARAMETER BlockCommentHeader
-  Prefix header for automation comments.
+.NOTES
+  Intended path: .github/scripts/ai-bot-approve-merge.ps1
 #>
 
 [CmdletBinding()]
@@ -98,20 +70,7 @@ function Write-Log {
     [Parameter(Mandatory)][string]$Message
   )
   $ts = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff')
-  Write-Host "[$ts][$Level] $Message"
-}
-
-function New-NativeResult {
-  param(
-    [int]$ExitCode,
-    [string]$StdOut,
-    [string]$StdErr
-  )
-  [pscustomobject]@{
-    ExitCode = $ExitCode
-    StdOut   = $StdOut
-    StdErr   = $StdErr
-  }
+  Write-Host ("[{0}][{1}] {2}" -f $ts, $Level, $Message)
 }
 
 function Invoke-Native {
@@ -138,13 +97,19 @@ function Invoke-Native {
   $stderr = $p.StandardError.ReadToEnd()
   $p.WaitForExit()
 
-  $res = New-NativeResult -ExitCode $p.ExitCode -StdOut $stdout -StdErr $stderr
+  $res = [pscustomobject]@{
+    ExitCode = $p.ExitCode
+    StdOut   = $stdout
+    StdErr   = $stderr
+  }
+
   if (-not $AllowNonZeroExit -and $res.ExitCode -ne 0) {
     $cmd = ($ExeArgs -join ' ')
-    $msg = "gh failed (exit=$($res.ExitCode)): $Exe $cmd"
+    $msg = "Command failed (exit=$($res.ExitCode)): $Exe $cmd"
     if ($res.StdErr) { $msg += "`n$($res.StdErr.TrimEnd())" }
     throw $msg
   }
+
   return $res
 }
 
@@ -176,58 +141,50 @@ function Try-GetGhLogin {
 }
 
 function Ensure-Label {
-  param([string]$Name)
+  param([Parameter(Mandatory)][string]$Name)
   try {
-    Invoke-Native -Exe 'gh' -ExeArgs @('label','create',$Name,'-R',$Repo,'--color','BFD4F2','--description','Automation label') -AllowNonZeroExit | Out-Null
+    [void](Invoke-Native -Exe 'gh' -ExeArgs @('label','create',$Name,'-R',$Repo,'--color','BFD4F2','--description','Automation label') -AllowNonZeroExit)
   } catch { }
 }
 
 function Add-LabelSafe {
-  param([string]$Name)
+  param([Parameter(Mandatory)][string]$Name)
   Ensure-Label -Name $Name
   $r = Invoke-Native -Exe 'gh' -ExeArgs @('pr','edit',"$PullNumber",'-R',$Repo,'--add-label',$Name) -AllowNonZeroExit
   if ($r.ExitCode -ne 0) {
-    Write-Log WARN "Failed to add label '$Name' (continuing). stderr=$($r.StdErr.Trim())"
+    Write-Log WARN ("Failed to add label '{0}' (continuing). stderr={1}" -f $Name, (($r.StdErr ?? '').Trim()))
   }
 }
 
 function Comment-Safe {
-  param([string]$Body)
+  param([Parameter(Mandatory)][string]$Body)
   $full = "$BlockCommentHeader $Body"
   $r = Invoke-Native -Exe 'gh' -ExeArgs @('pr','comment',"$PullNumber",'-R',$Repo,'--body',$full) -AllowNonZeroExit
   if ($r.ExitCode -ne 0) {
-    Write-Log WARN "Failed to comment on PR (continuing). stderr=$($r.StdErr.Trim())"
+    Write-Log WARN ("Failed to comment on PR (continuing). stderr={0}" -f (($r.StdErr ?? '').Trim()))
   }
 }
 
 function Get-PrState {
-  # Use gh pr view --json for portability and to avoid branch protection REST endpoints.
+  # NOTE: statusCheckRollup may be null/absent depending on API/gh version/permissions; handle as UNKNOWN.
   $fields = 'mergeStateStatus,reviewDecision,statusCheckRollup,isDraft,author,headRefName,url'
   return Invoke-GhJson -GhArgs @('pr','view',"$PullNumber",'-R',$Repo,'--json',$fields)
 }
 
 function Get-RollupState {
-  param($PrView)
-  # Preferred: statusCheckRollup.state (SUCCESS/FAILURE/PENDING/ERROR/...)
-  $state = $null
-  try { $state = $PrView.statusCheckRollup.state } catch { $state = $null }
-  if (-not $state) { return 'UNKNOWN' }
-  return [string]$state
+  param([Parameter(Mandatory)]$PrView)
+  try {
+    $state = $PrView.statusCheckRollup.state
+    if ($state) { return [string]$state }
+  } catch { }
+  return 'UNKNOWN'
 }
 
-function Rollup-IsGreen {
-  param([string]$RollupState)
-  switch ($RollupState) {
-    'SUCCESS' { return $true }
-    default   { return $false }
-  }
-}
-
-function Rollup-IsTerminalFailure {
-  param([string]$RollupState)
+function Is-TerminalBadRollup {
+  param([Parameter(Mandatory)][string]$RollupState)
   switch ($RollupState) {
     'FAILURE' { return $true }
-    'ERROR'   { return $true }
+    'ERROR' { return $true }
     'CANCELLED' { return $true }
     'TIMED_OUT' { return $true }
     default { return $false }
@@ -235,7 +192,10 @@ function Rollup-IsTerminalFailure {
 }
 
 function Try-Approve {
-  param([string]$Actor, [string]$Author)
+  param(
+    [Parameter(Mandatory)][string]$Actor,
+    [Parameter(Mandatory)][string]$Author
+  )
 
   if (-not $TryAutoApprove) { return $false }
 
@@ -245,24 +205,23 @@ function Try-Approve {
   }
 
   if ($Actor -eq $Author) {
-    Write-Log WARN "Token subject '$Actor' equals PR author '$Author'. Self-approval typically does not satisfy review requirements. Skipping auto-approve."
+    Write-Log WARN ("Token subject '{0}' equals PR author '{1}'. Self-approval typically does not satisfy review requirements. Skipping auto-approve." -f $Actor, $Author)
     return $false
   }
 
   $body = "Auto-approval by bot ($Actor). RunId=$RunId"
   $r = Invoke-Native -Exe 'gh' -ExeArgs @('pr','review',"$PullNumber",'-R',$Repo,'--approve','--body',$body) -AllowNonZeroExit
   if ($r.ExitCode -eq 0) {
-    Write-Log INFO "Submitted approval review as '$Actor'."
+    Write-Log INFO ("Submitted approval review as '{0}'." -f $Actor)
     return $true
   }
 
-  $stderr = ($r.StdErr ?? '').Trim()
-  Write-Log WARN "Auto-approve failed (exit=$($r.ExitCode)). stderr=$stderr"
+  Write-Log WARN ("Auto-approve failed (exit={0}). stderr={1}" -f $r.ExitCode, (($r.StdErr ?? '').Trim()))
   return $false
 }
 
 function Try-EnableAutoMerge {
-  param([string]$Method)
+  param([Parameter(Mandatory)][string]$Method)
 
   if (-not $EnableAutoMerge) { return $false }
 
@@ -271,7 +230,7 @@ function Try-EnableAutoMerge {
 
   $r = Invoke-Native -Exe 'gh' -ExeArgs $args -AllowNonZeroExit
   if ($r.ExitCode -eq 0) {
-    Write-Log INFO "Auto-merge enabled via: gh $($args -join ' ')"
+    Write-Log INFO ("Auto-merge enabled via: gh {0}" -f ($args -join ' '))
     return $true
   }
 
@@ -281,95 +240,83 @@ function Try-EnableAutoMerge {
     return $true
   }
 
-  Write-Log WARN "Enable auto-merge failed (exit=$($r.ExitCode)). stderr=$stderr"
+  Write-Log WARN ("Enable auto-merge failed (exit={0}). stderr={1}" -f $r.ExitCode, $stderr)
   return $false
 }
 
-# --- Main ---
-Write-Log INFO "Repo=$Repo PR=$PullNumber RunId=$RunId MaxAttempts=$MaxAttempts SleepSeconds=$SleepSeconds MergeMethod=$MergeMethod DeleteBranch=$($DeleteBranch.IsPresent)"
+# ---------------- main ----------------
+Write-Log INFO ("Repo={0} PR={1} RunId={2} MaxAttempts={3} SleepSeconds={4} MergeMethod={5} DeleteBranch={6}" -f $Repo, $PullNumber, $RunId, $MaxAttempts, $SleepSeconds, $MergeMethod, $DeleteBranch.IsPresent)
 
 if (-not $env:GH_TOKEN) {
   Write-Log WARN "GH_TOKEN is not set. gh will use its own auth context (likely github.token in Actions). For bot PAT, set GH_TOKEN at job level."
 }
 
 $actor = Try-GetGhLogin
-if ($actor) {
-  Write-Log INFO "Token subject (gh api user) = $actor"
-} else {
-  Write-Log WARN "Could not determine token subject via gh api user."
-}
+if ($actor) { Write-Log INFO ("Token subject (gh api user) = {0}" -f $actor) } else { Write-Log WARN "Could not determine token subject via gh api user." }
 
 for ($i = 1; $i -le $MaxAttempts; $i++) {
   $pr = Get-PrState
   $mergeState = [string]$pr.mergeStateStatus
   $reviewDecision = [string]$pr.reviewDecision
   $isDraft = [bool]$pr.isDraft
+
   $author = $null
   try { $author = [string]$pr.author.login } catch { $author = $null }
-  $rollupState = Get-RollupState -PrView $pr
 
-  $checksOK = Rollup-IsGreen -RollupState $rollupState
+  $rollupState = Get-RollupState -PrView $pr
+  $checksOK = ($rollupState -eq 'SUCCESS')
 
   Write-Log INFO ("Attempt {0}/{1}: mergeState={2} reviewDecision={3} rollupState={4} checksOK={5} draft={6} author={7} actor={8}" -f $i, $MaxAttempts, $mergeState, $reviewDecision, $rollupState, $checksOK, $isDraft, $author, $actor)
 
   if ($isDraft) {
     Add-LabelSafe -Name $BlockLabel
-    Comment-Safe -Body "PR is a draft. Please mark it as 'Ready for review' to proceed. (mergeState=$mergeState reviewDecision=$reviewDecision rollup=$rollupState run_id=$RunId)"
-    throw "PR is draft; cannot proceed."
+    Comment-Safe -Body ("PR is a draft. Please mark it as 'Ready for review' to proceed. run_id={0}" -f $RunId)
+    exit 0
   }
 
-  if (Rollup-IsTerminalFailure -RollupState $rollupState) {
+  if ($reviewDecision -eq 'CHANGES_REQUESTED') {
     Add-LabelSafe -Name $BlockLabel
-    Comment-Safe -Body "Checks are failing (statusCheckRollup=$rollupState). Fix checks before auto-merge. run_id=$RunId"
-    throw "Checks failing: $rollupState"
+    Comment-Safe -Body ("Changes were requested on this PR. Please address review comments, then re-run automation. run_id={0}" -f $RunId)
+    exit 0
   }
 
-  if (-not $checksOK) {
-    # Pending or unknown checks: wait.
+  # REVIEW_REQUIRED is handled FIRST, regardless of check state.
+  if ($reviewDecision -eq 'REVIEW_REQUIRED') {
+    $didApprove = Try-Approve -Actor $actor -Author $author
+    if (-not $didApprove) {
+      Add-LabelSafe -Name $BlockLabel
+      Comment-Safe -Body ("Review is required but automation could not approve (actor={0} author={1}). Please approve manually or adjust branch protection. run_id={2}" -f $actor, $author, $RunId)
+      exit 0
+    }
+
+    Start-Sleep -Seconds 5
     Start-Sleep -Seconds $SleepSeconds
     continue
   }
 
-  switch ($reviewDecision) {
-    'APPROVED' {
-      # ok
-    }
-    'REVIEW_REQUIRED' {
-      $didApprove = Try-Approve -Actor $actor -Author $author
-      if (-not $didApprove) {
-        Add-LabelSafe -Name $BlockLabel
-        Comment-Safe -Body "Review is required but automation could not approve (actor=$actor author=$author). Please approve manually or adjust branch protection settings. run_id=$RunId"
-        throw "Review required but auto-approve not possible."
-      }
-      # After approving, wait a bit and re-check.
-      Start-Sleep -Seconds 10
-      Start-Sleep -Seconds $SleepSeconds
-      continue
-    }
-    'CHANGES_REQUESTED' {
-      Add-LabelSafe -Name $BlockLabel
-      Comment-Safe -Body "Changes were requested on this PR. Please address review comments, then re-run automation. run_id=$RunId"
-      throw "Changes requested."
-    }
-    default {
-      # Unknown review state -> fail-closed
-      Add-LabelSafe -Name $BlockLabel
-      Comment-Safe -Body "Unknown reviewDecision='$reviewDecision'. Please review manually. run_id=$RunId"
-      throw "Unknown reviewDecision: $reviewDecision"
-    }
+  # If checks are failing, do NOT fail this workflow. Leave a note and exit 0.
+  if (Is-TerminalBadRollup -RollupState $rollupState) {
+    Add-LabelSafe -Name $BlockLabel
+    Comment-Safe -Body ("Checks are failing (statusCheckRollup={0}). Fix checks before merge. run_id={1}" -f $rollupState, $RunId)
+    exit 0
   }
 
-  # At this point checks green and approved.
-  # mergeStateStatus may still be BLOCKED if something else (e.g. required conversations, merge queue, etc.)
+  # Try enabling auto-merge even if checks are pending/unknown.
   $enabled = Try-EnableAutoMerge -Method $MergeMethod
   if ($enabled) { exit 0 }
 
-  # If auto-merge couldn't be enabled, classify and block.
+  # Not enabled yet. If checks are not green, wait and retry; otherwise leave a note and exit.
+  if (-not $checksOK) {
+    Start-Sleep -Seconds $SleepSeconds
+    continue
+  }
+
   Add-LabelSafe -Name $BlockLabel
-  Comment-Safe -Body "Automation could not enable auto-merge (mergeState=$mergeState). Please check branch protection / merge queue / permissions. run_id=$RunId"
-  throw "Failed to enable auto-merge. mergeState=$mergeState"
+  Comment-Safe -Body ("Automation could not enable auto-merge (mergeState={0}). Please check branch protection / merge queue / permissions. run_id={1}" -f $mergeState, $RunId)
+  exit 0
 }
 
+# Retries exhausted -> do NOT fail; leave guidance and exit 0.
 Add-LabelSafe -Name $BlockLabel
-Comment-Safe -Body "Failed after $MaxAttempts attempts. Please review manually. run_id=$RunId"
-throw "Failed after $MaxAttempts attempts."
+Comment-Safe -Body ("Not ready after {0} attempts (mergeState/review/checks unresolved). Please review manually. run_id={1}" -f $MaxAttempts, $RunId)
+exit 0
