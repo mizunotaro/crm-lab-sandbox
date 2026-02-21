@@ -155,6 +155,30 @@ function Get-PrInfo {
   $fields = 'url,labels,isDraft,headRefName,headRefOid,headRepository,baseRefName'
   return Invoke-GhJson -ExeArgs @('pr', 'view', "$PullNumber", '-R', $Repo, '--json', $fields)
 }
+function Get-HeadRepoFullName {
+  param([object]$HeadRepo)
+
+  if ($null -eq $HeadRepo) { return $null }
+  if ($HeadRepo -is [string]) { return [string]$HeadRepo }
+
+  foreach ($prop in @('fullName','nameWithOwner')) {
+    $p = $HeadRepo.PSObject.Properties[$prop]
+    if ($p -and $p.Value) { return [string]$p.Value }
+  }
+
+  # Fallback: owner.login + name
+  $nameProp  = $HeadRepo.PSObject.Properties['name']
+  $ownerProp = $HeadRepo.PSObject.Properties['owner']
+  if ($nameProp -and $ownerProp -and $ownerProp.Value) {
+    $loginProp = $ownerProp.Value.PSObject.Properties['login']
+    if ($loginProp -and $loginProp.Value) {
+      return ('{0}/{1}' -f [string]$loginProp.Value, [string]$nameProp.Value)
+    }
+  }
+
+  return $null
+}
+
 
 function Get-ChangedFiles {
   $r = Invoke-Native -Exe 'gh' -ExeArgs @('pr', 'diff', "$PullNumber", '-R', $Repo, '--name-only')
@@ -386,7 +410,15 @@ try {
   if ($pr.isDraft -eq $true) { Write-LogLine -Level 'INFO' -Message "PR is draft. Skip."; exit 0 }
 
   # Safety: internal PR only
-  if ([string]$pr.headRepository.fullName -ne $Repo) { Write-LogLine -Level 'INFO' -Message "External PR. Skip."; exit 0 }
+  $headRepoFullName = Get-HeadRepoFullName $pr.headRepository
+  if (-not $headRepoFullName) {
+    Write-LogLine -Level 'WARN' -Message 'Cannot determine PR head repository full name. Treating as external PR; skip.'
+    exit 0
+  }
+  if ([string]$headRepoFullName -ne $Repo) {
+    Write-LogLine -Level 'INFO' -Message ("External PR (headRepo={0}). Skip." -f $headRepoFullName)
+    exit 0
+  }
 
   $gate = @($policy.labels.gate_any_of)
   if ($gate.Count -gt 0 -and -not (Has-AnyGateLabel -GateAnyOf $gate -Labels @($pr.labels))) {
@@ -501,4 +533,3 @@ try {
   Try-AddLabel -Label 'ai:blocked'
   throw
 }
-
