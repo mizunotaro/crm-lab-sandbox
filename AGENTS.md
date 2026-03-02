@@ -215,3 +215,431 @@ Create: `docs/ai/decisions/ADR-XXXX-<title>.md`
 - Alternatives considered:
 - Consequences:
 - Migration / rollback plan:
+
+---
+
+## Appendix C: Security Checklist & Review Protocol
+
+### C.1 Pre-Implementation Security Checklist
+Before writing ANY code that handles authentication, authorization, or user data, verify:
+
+#### Authentication & Session
+- [ ] **ID Token Verification**: Never decode JWT payload without verifying signature
+  - Use libraries like `jose` for JWT verification
+  - Verify `iss` (issuer), `aud` (audience), `exp` (expiration)
+- [ ] **Session Regeneration**: Generate new session ID after successful authentication
+- [ ] **No Default Secrets**: All secrets must be validated at startup, never use hardcoded defaults
+- [ ] **Secret Length Requirements**:
+  - `SESSION_SECRET`: minimum 32 characters
+  - `ENCRYPTION_KEY`: 64 hex characters (32 bytes)
+
+#### Input Validation
+- [ ] **Zod/Yup Schema**: All user inputs validated with schema
+- [ ] **Integer Parsing**: Always check `isNaN()` after `parseInt()`
+- [ ] **ID Validation**: Use `isValidId()` for all resource IDs
+- [ ] **Amount Limits**: Set `max(Number.MAX_SAFE_INTEGER)` for numeric inputs
+- [ ] **Array Limits**: Limit array size in bulk operations (e.g., max 1000 items)
+
+#### Output Encoding
+- [ ] **HTML Escape**: All user data in HTML must use `escapeHtml()`
+- [ ] **CSV Escape**: Use `escapeCSV()` for CSV exports
+- [ ] **JSON Response**: Never include raw error messages from external APIs
+
+#### Rate Limiting & Access Control
+- [ ] **Rate Limit**: All API endpoints should have rate limiting
+- [ ] **Resource Ownership**: Verify `userId` matches resource owner before any operation
+- [ ] **Origin Validation**: Non-GET requests must validate `Origin` header
+
+### C.2 Security Review Persona (Activate for Code Review)
+
+When reviewing code, adopt the **Security Auditor Persona**:
+
+```
+You are a security auditor performing a penetration test. Your goal is to find 
+vulnerabilities before attackers do. For each code change, consider:
+
+1. AUTHENTICATION BYPASS
+   - Can an attacker forge tokens or session cookies?
+   - Are OAuth callbacks properly validated?
+   - Is the JWT signature verified?
+
+2. AUTHORIZATION BYPASS
+   - Can user A access user B's data by changing an ID?
+   - Are resource ownership checks in place?
+
+3. INJECTION ATTACKS
+   - SQL: Is Prisma used correctly with parameterized queries?
+   - XSS: Is user input escaped in HTML/CSV/Excel output?
+   - Command: Are there any shell executions with user input?
+
+4. DATA EXPOSURE
+   - Are secrets logged or returned in API responses?
+   - Are encryption keys hardcoded or properly managed?
+
+5. RATE LIMITING
+   - Can an attacker brute-force authentication?
+   - Can bulk operations be abused?
+
+Report findings with severity: CRITICAL / HIGH / MEDIUM / LOW
+```
+
+### C.3 Mandatory Security Patterns
+
+```typescript
+// ✅ CORRECT: Validate environment at startup
+export const SESSION_SECRET = (() => {
+  const secret = process.env.SESSION_SECRET
+  if (!secret || secret.length < 32) {
+    throw new Error('SESSION_SECRET must be set and at least 32 characters')
+  }
+  return secret
+})()
+
+// ❌ WRONG: Hardcoded default
+const SECRET = process.env.SECRET || 'default_secret_key'
+```
+
+```typescript
+// ✅ CORRECT: Verify JWT signature
+import { jwtVerify, createRemoteJWKSet } from 'jose'
+const { payload } = await jwtVerify(token, JWKS, { issuer, audience })
+
+// ❌ WRONG: Just decode payload
+const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
+```
+
+```typescript
+// ✅ CORRECT: Escape user input in HTML
+const escapeHtml = (s: string) => s
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+
+// ❌ WRONG: Direct interpolation
+`<div>${userInput}</div>`
+```
+
+```typescript
+// ✅ CORRECT: Validate and parse integers
+export function validateInteger(value: string | null | undefined, name: string): number | null {
+  if (!value) return null
+  const parsed = parseInt(value, 10)
+  if (isNaN(parsed)) throw new Error(`Invalid ${name}`)
+  return parsed
+}
+
+// ❌ WRONG: No validation
+const year = parseInt(req.query('year'))
+```
+
+```typescript
+// ✅ CORRECT: Resource ownership check
+const resource = await db.resource.findFirst({ 
+  where: { id, userId: session.userId } 
+})
+
+// ❌ WRONG: No ownership check
+const resource = await db.resource.findUnique({ where: { id } })
+```
+
+### C.4 Security Review Checklist (Before Merge)
+
+- [ ] No hardcoded secrets or default credentials
+- [ ] All JWTs verified with signature check
+- [ ] All user inputs validated with Zod/Yup
+- [ ] All outputs escaped (HTML, CSV, JSON)
+- [ ] Rate limiting on authentication endpoints
+- [ ] Resource ownership verified
+- [ ] Origin validation for state-changing operations
+- [ ] Session regenerated after login
+- [ ] Dependencies scanned for vulnerabilities
+- [ ] Error messages don't leak sensitive info
+
+### C.5 Common Vulnerability Patterns to Avoid
+
+| Pattern | Vulnerability | Fix |
+|---------|--------------|-----|
+| `process.env.X \|\| 'default'` | Hardcoded secret | Validate at startup, throw if missing |
+| `JSON.parse(atob(token.split('.')[1]))` | JWT forgery | Use `jwtVerify()` with JWKS |
+| `<div>${input}</div>` | XSS | Use `escapeHtml()` |
+| `parseInt(req.query.x)` | NaN/undefined | Use `validateInteger()` |
+| `findUnique({ where: { id } })` | IDOR | Use `findFirst({ where: { id, userId } })` |
+| `X-Forwarded-For` directly | IP spoofing | Take first IP only |
+| Session not regenerated | Session fixation | Clear + recreate after auth |
+
+---
+
+## Appendix D: Environment Variable Security Requirements
+
+All projects MUST validate required environment variables at startup:
+
+```typescript
+// config/index.ts
+function getRequiredEnv(name: string): string {
+  const value = process.env[name]
+  if (!value) {
+    throw new Error(`Environment variable ${name} is required`)
+  }
+  return value
+}
+
+export const CONFIG = {
+  sessionSecret: (() => {
+    const s = process.env.SESSION_SECRET
+    if (!s || s.length < 32) throw new Error('SESSION_SECRET: min 32 chars')
+    return s
+  })(),
+  encryptionKey: (() => {
+    const k = process.env.ENCRYPTION_KEY
+    if (!k || k.length !== 64 || !/^[0-9a-fA-F]+$/.test(k)) {
+      throw new Error('ENCRYPTION_KEY: must be 64 hex chars')
+    }
+    return Buffer.from(k, 'hex')
+  })(),
+  // ... other config
+}
+```
+
+**Startup should FAIL** if any required variable is missing or invalid.
+
+---
+
+## Appendix E: Quality Assurance & Code Review Standards
+
+### E.1 Code Review Checklist
+
+Before merging any code, verify:
+
+#### Stability
+- [ ] **Error Handling**: All async operations wrapped in try-catch
+- [ ] **Transactions**: Multi-record operations use database transactions
+- [ ] **Retries**: External API calls have retry logic with exponential backoff
+- [ ] **Graceful Degradation**: Service failures don't crash the application
+- [ ] **Resource Cleanup**: Connections, streams, and handles are properly closed
+
+#### Robustness
+- [ ] **Type Safety**: No `any` types without justification
+- [ ] **Type Assertions**: Avoid `as` assertions; use type guards or Zod
+- [ ] **Null Safety**: All nullable values checked before use
+- [ ] **Boundary Values**: Edge cases tested (empty, max, negative)
+- [ ] **ID Validation**: All resource IDs validated before DB operations
+
+#### Testability
+- [ ] **No Global State**: Dependencies passed as arguments or injected
+- [ ] **Pure Functions**: Business logic separated from I/O
+- [ ] **Time Injection**: Current time passed as parameter for deterministic tests
+- [ ] **Mockable**: External dependencies can be mocked
+
+#### Maintainability
+- [ ] **DRY**: No duplicated code (extract to shared module)
+- [ ] **Single Responsibility**: Functions do one thing, under 30 lines
+- [ ] **Named Constants**: No magic numbers or strings
+- [ ] **Comments**: Complex logic explained, not just restating code
+
+### E.2 Error Handling Standards
+
+```typescript
+// ✅ CORRECT: Structured error handling
+try {
+  const result = await externalApi.call()
+  return { success: true, data: result }
+} catch (error) {
+  logger.error('API call failed', { error, context: { userId } })
+  return { success: false, error: 'Service temporarily unavailable' }
+}
+
+// ❌ WRONG: Silent failure
+try {
+  await doSomething()
+} catch {
+  // ignored
+}
+```
+
+#### Error Response Format
+```typescript
+interface ApiError {
+  error: string           // User-friendly message
+  code?: string          // Machine-readable code
+  details?: unknown      // Only in development
+}
+```
+
+#### Logging Standards
+```typescript
+// Always include context
+logger.error('Operation failed', {
+  error: error.message,
+  stack: error.stack,
+  context: { userId, resourceId, operation }
+})
+```
+
+### E.3 Testability Requirements
+
+#### Dependency Injection Pattern
+```typescript
+// ✅ CORRECT: Dependencies injected
+export function createUserService(deps: {
+  db: PrismaClient
+  emailService: EmailService
+}) {
+  return {
+    async createUser(data: CreateUserInput) {
+      const user = await deps.db.user.create({ data })
+      await deps.emailService.sendWelcome(user.email)
+      return user
+    }
+  }
+}
+
+// ❌ WRONG: Hard dependencies
+export async function createUser(data: CreateUserInput) {
+  const user = await prisma.user.create({ data })  // Global prisma
+  await sendEmail(user.email)  // Direct import
+  return user
+}
+```
+
+#### Time Injection
+```typescript
+// ✅ CORRECT: Time injected
+export function getExpiryDate(now: Date = new Date()): Date {
+  return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+}
+
+// ❌ WRONG: Current time hardcoded
+export function getExpiryDate(): Date {
+  return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+}
+```
+
+### E.4 Security Testing Requirements
+
+#### Automated Tests (CI Pipeline)
+```yaml
+# Required security tests
+- pnpm audit                    # Dependency vulnerabilities
+- pnpm test                     # Unit tests with security cases
+- OWASP ZAP baseline scan      # API security scan
+```
+
+#### Test Coverage Requirements
+| Category | Minimum Coverage |
+|----------|-----------------|
+| Authentication | 90% |
+| Authorization | 90% |
+| Input Validation | 80% |
+| Business Logic | 70% |
+
+#### Security Test Cases Required
+```typescript
+describe('Authentication', () => {
+  it('rejects invalid JWT signature')
+  it('rejects expired tokens')
+  it('regenerates session after login')
+  it('prevents session fixation')
+})
+
+describe('Authorization', () => {
+  it('prevents access to other users resources')
+  it('validates resource ownership')
+})
+```
+
+### E.5 Security Logging Standards
+
+#### Events to Log
+| Event | Level | Fields |
+|-------|-------|--------|
+| Login success | INFO | userId, ip, userAgent |
+| Login failure | WARN | email, ip, reason |
+| Token refresh | INFO | userId |
+| Permission denied | WARN | userId, resource, action |
+| Rate limit exceeded | WARN | ip, endpoint |
+| Config change | AUDIT | userId, change |
+
+#### Log Format
+```typescript
+interface SecurityLog {
+  timestamp: string
+  level: 'INFO' | 'WARN' | 'ERROR' | 'AUDIT'
+  event: string
+  userId?: string
+  ip?: string
+  userAgent?: string
+  details?: Record<string, unknown>
+}
+```
+
+### E.6 Incident Response Checklist
+
+When vulnerability is discovered:
+
+1. **Immediate (0-1 hour)**
+   - [ ] Document the vulnerability
+   - [ ] Assess severity (CRITICAL/HIGH/MEDIUM/LOW)
+   - [ ] Notify security team
+   - [ ] Consider temporary mitigation (disable feature, WAF rule)
+
+2. **Short-term (1-24 hours)**
+   - [ ] Create fix in separate branch
+   - [ ] Add regression test
+   - [ ] Code review with security focus
+   - [ ] Deploy to staging, verify fix
+
+3. **Deployment**
+   - [ ] Deploy fix to production
+   - [ ] Monitor for anomalies
+   - [ ] Update dependencies if needed
+   - [ ] Rotate any compromised secrets
+
+4. **Post-incident (1-7 days)**
+   - [ ] Write incident report
+   - [ ] Update security checklist
+   - [ ] Schedule security review
+   - [ ] Update lessons-learned.md
+
+### E.7 Quality Metrics Dashboard
+
+Track these metrics weekly:
+
+| Metric | Target | Alert Threshold |
+|--------|--------|-----------------|
+| Test Coverage | >80% | <70% |
+| TypeScript Errors | 0 | >0 |
+| Lint Errors | 0 | >0 |
+| Security Vulnerabilities | 0 Critical/High | Any Critical |
+| Code Duplication | <5% | >10% |
+| Open Security Issues | 0 | >3 |
+
+### E.8 Code Quality Persona (Activate for Code Review)
+
+When reviewing code quality, adopt this persona:
+
+```
+You are a senior architect reviewing for long-term maintainability. Consider:
+
+1. STABILITY
+   - Are errors handled gracefully?
+   - Will this work under load?
+   - What happens if external services fail?
+
+2. TESTABILITY
+   - Can I unit test this without mocking the world?
+   - Are dependencies injectable?
+   - Is business logic separated from I/O?
+
+3. MAINTAINABILITY
+   - Will a new developer understand this in 6 months?
+   - Is there unnecessary complexity?
+   - Is the code DRY?
+
+4. EXTENSIBILITY
+   - Can new features be added without major refactoring?
+   - Are abstractions appropriate?
+   - Is configuration externalized?
+
+Report findings as: MUST FIX / SHOULD FIX / NICE TO HAVE
+```
