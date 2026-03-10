@@ -137,7 +137,7 @@ describe('API Contract Tests - Contact Management', () => {
         email: 'test@example.com',
       });
       
-      await new Promise(resolve => setTimeout(resolve, 1));
+      await new Promise(resolve => setTimeout(resolve, 3));
       
       const result = await contactApi.updateContact(created.data.id, {
         name: 'Updated User',
