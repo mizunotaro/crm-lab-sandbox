@@ -10,7 +10,6 @@ expo/
 # docs/ is mostly ignored, but specific subdirectories are tracked below
 #docs/
 docs/ops/
-docs/ai/
 ops/logs/
 _probe/
 *.bak_*
