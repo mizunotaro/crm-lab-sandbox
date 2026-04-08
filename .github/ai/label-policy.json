@@ -1,0 +1,17 @@
+{
+  "labels": {
+    "gate_common": "ai:in-progress",
+    "gate_autofix": "ai:auto-fix",
+    "gate_automerge": "ai:auto-merge",
+    "blocked": "ai:blocked"
+  },
+  "success_cleanup": {
+    "remove_labels": [
+      "ai:blocked"
+    ],
+    "best_effort": true
+  },
+  "retry": {
+    "max_attempts": 10
+  }
+}
